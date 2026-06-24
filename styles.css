@@ -484,6 +484,29 @@ input[type=number],select{
 .hack-opt.correct{border-color:var(--green-ok);background:var(--green-ok-bg);color:var(--ink);font-weight:600;}
 .hack-opt.correct .letter{background:var(--green-ok);color:#fff;border-color:var(--green-ok);}
 
+/* ===== roles / administrador ===== */
+.admin-badge{
+  display:inline-block;font-size:10px;font-weight:800;letter-spacing:.5px;
+  background:var(--gold);color:var(--green-900);padding:2px 7px;border-radius:5px;
+  vertical-align:middle;
+}
+.admin-panel{margin-top:16px;border:1.5px solid var(--gold);}
+.admin-panel h2{display:flex;align-items:center;gap:8px;}
+.adm-users{margin-top:14px;}
+.adm-users-head{font-size:13px;font-weight:700;color:var(--ink-soft);}
+.adm-users table{margin-top:6px;}
+
+/* botón borrar mensaje (chat, solo admin) */
+.chat-msg{position:relative;}
+.chat-del{
+  position:absolute;top:4px;right:4px;
+  background:transparent;border:none;color:inherit;opacity:.45;
+  padding:2px;border-radius:5px;line-height:0;cursor:pointer;transition:.12s;
+}
+.chat-del .icon{width:14px;height:14px;}
+.chat-del:hover{opacity:1;color:var(--red);background:rgba(0,0,0,.06);}
+.chat-msg.mine .chat-del:hover{background:rgba(255,255,255,.18);color:#fff;}
+
 /* touch targets accesibles (>=44px) y legibilidad movil */
 .nav-btn,.btn,.mark-btn,.section-toggle button{min-height:44px;}
 .qoption{min-height:48px;}

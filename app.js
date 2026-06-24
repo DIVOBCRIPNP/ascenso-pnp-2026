@@ -688,6 +688,7 @@ async function renderRanking(){
     box.innerHTML = `<div class="empty">Aún no hay puntajes registrados.<br><br>
       <button class="btn gold" id="rk-exam">Rendir el primer simulacro</button></div>`;
     document.getElementById("rk-exam").onclick = ()=> setView("examen");
+    if(window.Auth.isAdmin()) renderAdminTools();
     return;
   }
   const myEmail = SESSION ? SESSION.email : null;
@@ -709,6 +710,50 @@ async function renderRanking(){
       </tbody>
     </table>
   `;
+  if(window.Auth.isAdmin()) renderAdminTools();
+}
+
+/* panel de administrador en la vista de ranking */
+function renderAdminTools(){
+  const panel = document.createElement("div");
+  panel.className = "card admin-panel";
+  panel.innerHTML = `
+    <h2><span class="admin-badge">ADMIN</span> Herramientas de administrador</h2>
+    <div class="btn-row" style="margin-top:0">
+      <button class="btn outline" id="adm-inscritos">Ver inscritos</button>
+      <button class="btn danger" id="adm-reset">Reiniciar ranking</button>
+    </div>
+    <div id="adm-users" class="adm-users"></div>
+  `;
+  $app.appendChild(panel);
+
+  document.getElementById("adm-reset").onclick = async ()=>{
+    if(!confirm("¿Reiniciar el ranking? Esto borra TODOS los puntajes de todos los participantes y no se puede deshacer.")) return;
+    const ok = await window.Auth.resetRanking();
+    if(ok){ alert("Ranking reiniciado."); setView("ranking"); }
+    else alert("No se pudo reiniciar (¿permisos de admin?).");
+  };
+
+  document.getElementById("adm-inscritos").onclick = async ()=>{
+    const cont = document.getElementById("adm-users");
+    cont.innerHTML = `<div class="empty" style="padding:14px 0">Cargando inscritos…</div>`;
+    const { users, permitidos } = await window.Auth.getUsers();
+    if(!users.length){ cont.innerHTML = `<div class="empty" style="padding:14px 0">Sin inscritos aún.</div>`; return; }
+    const fmt = (ts)=>{ if(!ts) return "—"; const d = new Date(Number(ts)); return d.toLocaleString("es-PE",{day:"2-digit",month:"2-digit",hour:"2-digit",minute:"2-digit"}); };
+    cont.innerHTML = `
+      <div class="adm-users-head">${users.length} inscrito${users.length===1?'':'s'} · ${permitidos} en lista de permitidos</div>
+      <table class="ranking-table" style="margin-top:8px">
+        <thead><tr><th>Participante</th><th>Correo</th><th>Rol</th><th>Última conexión</th></tr></thead>
+        <tbody>
+          ${users.map(u=>`<tr>
+            <td>${escapeHtml(u.nombre||"—")}</td>
+            <td style="font-size:12px;color:var(--ink-soft)">${escapeHtml(u.email)}</td>
+            <td>${u.rol==="admin"?'<span class="admin-badge">ADMIN</span>':'alumno'}</td>
+            <td style="font-size:12.5px">${fmt(u.last_seen)}</td>
+          </tr>`).join("")}
+        </tbody>
+      </table>`;
+  };
 }
 
 /* ---------------- CHAT interno ---------------- */
@@ -763,16 +808,30 @@ function renderChat(){
   function appendMessages(msgs){
     if(!msgs.length) return;
     const wasAtBottom = feed.scrollHeight - feed.scrollTop - feed.clientHeight < 40;
+    const admin = window.Auth.isAdmin();
     msgs.forEach(m=>{
       const mine = m.email === myEmail;
       const div = document.createElement("div");
       div.className = "chat-msg" + (mine ? " mine" : "");
+      div.dataset.id = m.id;
       div.innerHTML = `
         <span class="chat-author">${escapeHtml(m.nombre || m.email)}</span>
         <span class="chat-text">${escapeHtml(m.text)}</span>
+        ${admin ? `<button class="chat-del" title="Borrar mensaje" aria-label="Borrar mensaje" data-id="${m.id}">${svg("trash")}</button>` : ""}
       `;
       feed.appendChild(div);
     });
+    if(admin){
+      feed.querySelectorAll(".chat-del").forEach(b=>{
+        if(b.dataset.bound) return;
+        b.dataset.bound = "1";
+        b.onclick = async ()=>{
+          if(!confirm("¿Borrar este mensaje?")) return;
+          const ok = await window.Auth.deleteMessage(Number(b.dataset.id));
+          if(ok){ const row = b.closest(".chat-msg"); if(row) row.remove(); }
+        };
+      });
+    }
     if(wasAtBottom || msgs.some(m=>m.email===myEmail)) feed.scrollTop = feed.scrollHeight;
   }
 
@@ -818,7 +877,10 @@ function setupUserUI(){
   const chip = document.getElementById("user-chip");
   const logout = document.getElementById("logout-btn");
   if(SESSION && window.Auth){
-    if(chip){ chip.hidden = false; chip.textContent = window.Auth.name(SESSION); }
+    if(chip){
+      chip.hidden = false;
+      chip.innerHTML = escapeHtml(window.Auth.name(SESSION)) + (window.Auth.isAdmin() ? ' <span class="admin-badge">ADMIN</span>' : '');
+    }
     if(logout){
       logout.hidden = false;
       logout.onclick = ()=> window.Auth.signOut();
@@ -836,6 +898,8 @@ function setupUserUI(){
     setupUserUI();
     window.Auth.heartbeat();
     setInterval(()=> window.Auth.heartbeat(), 20000);
+    // refresca el rol por si cambió en la hoja Permitidos desde el último login
+    window.Auth.refreshRole().then(()=>{ SESSION = window.Auth.getSession(); setupUserUI(); });
   }
 
   $app.innerHTML = `<div class="empty">Cargando banco de preguntas…</div>`;

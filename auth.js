@@ -56,9 +56,47 @@ const Auth = {
   async loginWithGoogleCredential(idToken){
     const r = await api("login", { idToken });
     if(!r.ok) return r;
-    const session = { token:r.token, email:r.email, nombre:r.nombre, picture:r.picture };
+    const session = { token:r.token, email:r.email, nombre:r.nombre, picture:r.picture, rol:r.rol||"alumno" };
     setLocalSession(session);
     return { ok:true, session };
+  },
+
+  isAdmin(){
+    const s = getLocalSession();
+    return !!(s && s.rol === "admin");
+  },
+
+  // Refresca el rol desde el servidor y lo guarda (para sesiones ya abiertas)
+  async refreshRole(){
+    const s = getLocalSession();
+    if(!s || !s.token) return;
+    const r = await api("whoami", { token:s.token });
+    if(r.ok && r.rol && r.rol !== s.rol){
+      s.rol = r.rol;
+      setLocalSession(s);
+    }
+  },
+
+  async deleteMessage(id){
+    const s = getLocalSession();
+    if(!s) return false;
+    const r = await api("deleteMessage", { token:s.token, id });
+    return !!r.ok;
+  },
+
+  async resetRanking(){
+    const s = getLocalSession();
+    if(!s) return false;
+    const r = await api("resetRanking", { token:s.token });
+    return !!r.ok;
+  },
+
+  // Devuelve {users:[{email,nombre,created_at,last_seen,rol}], permitidos}
+  async getUsers(){
+    const s = getLocalSession();
+    if(!s) return { users:[], permitidos:0 };
+    const r = await api("getUsers", { token:s.token });
+    return (r.ok ? { users:r.users||[], permitidos:r.permitidos||0 } : { users:[], permitidos:0 });
   },
 
   async signOut(){

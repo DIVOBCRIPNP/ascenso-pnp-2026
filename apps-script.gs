@@ -27,6 +27,7 @@
 
 const CLIENT_ID = "PEGA_AQUI_TU_GOOGLE_CLIENT_ID.apps.googleusercontent.com";
 const ALLOWED_DOMAIN = ""; // ej: "pnp.gob.pe" — vacío = cualquier cuenta de Google
+const ADMIN_EMAILS = []; // opcional, respaldo: correos admin "fijos". Lo normal es poner rol=admin en la hoja Permitidos.
 const SESSION_DAYS = 30;
 const ACTIVE_WINDOW_MS = 60 * 1000;   // se considera "en línea" si hubo heartbeat en los últimos 60s
 const MAX_MESSAGES = 300;             // recorta el historial de chat a este tamaño
@@ -50,15 +51,37 @@ function setup(){
   sheet("Scores",   ["email","nombre","puntaje","total","pct","duracion","created_at"]);
   sheet("Presence", ["email","nombre","picture","last_seen"]);
   sheet("Messages", ["id","email","nombre","text","created_at"]);
-  const permit = sheet("Permitidos", ["email","nombre","nota"]);
-  // siembra tu propio correo (el dueño del script) para que nunca te quedes fuera
+  const permit = sheet("Permitidos", ["email","nombre","rol","nota"]);
+  ensureColumn(permit, "rol");   // migra hojas antiguas que no tenían columna rol
+  ensureColumn(permit, "nota");
+  // siembra tu propio correo (dueño del script) como admin, para que nunca te quedes fuera
   try{
     const owner = (Session.getEffectiveUser().getEmail() || "").trim().toLowerCase();
-    if(owner && findRowIndex(permit, "email", owner) === -1){
-      permit.appendRow([owner, "Administrador", "agregado automáticamente"]);
+    if(owner){
+      const idx = findRowIndex(permit, "email", owner);
+      if(idx === -1){
+        permit.appendRow([owner, "Administrador", "admin", "agregado automáticamente"]);
+      } else {
+        setCellByName(permit, idx, "rol", "admin");
+      }
     }
   }catch(e){ /* sin permisos para leer el correo: ignora */ }
   Logger.log("Listo. Hojas: Users, Sessions, Scores, Presence, Messages, Permitidos.");
+}
+
+/* añade una columna con ese encabezado si no existe (no toca las filas) */
+function ensureColumn(sh, name){
+  const lastCol = Math.max(1, sh.getLastColumn());
+  const headers = sh.getRange(1,1,1,lastCol).getValues()[0].map(h=> String(h).trim().toLowerCase());
+  if(headers.indexOf(name.toLowerCase()) === -1){
+    sh.getRange(1, sh.getLastColumn()+1).setValue(name);
+  }
+}
+/* escribe una celda buscando la columna por nombre de encabezado */
+function setCellByName(sh, rowIdx, colName, value){
+  const headers = sh.getRange(1,1,1,sh.getLastColumn()).getValues()[0].map(h=> String(h).trim().toLowerCase());
+  const c = headers.indexOf(colName.toLowerCase());
+  if(c >= 0) sh.getRange(rowIdx, c+1).setValue(value);
 }
 
 /* ---------------- lista de permitidos (allowlist) ----------------
@@ -80,6 +103,23 @@ function isEmailAllowed(email){
   if(list.length === 0) return true;       // lista vacía = abierto
   return list.indexOf(email) !== -1;
 }
+/* rol del usuario: "admin" o "alumno" (deriva de Permitidos.rol o de ADMIN_EMAILS) */
+function getUserRole(email){
+  email = String(email||"").trim().toLowerCase();
+  if(ADMIN_EMAILS.map(e=> String(e).trim().toLowerCase()).indexOf(email) !== -1) return "admin";
+  const sh = sheet("Permitidos", ["email","nombre","rol","nota"]);
+  const r = rowsAsObjects(sh).find(x=> String(x.email||"").trim().toLowerCase() === email);
+  if(r && String(r.rol||"").trim().toLowerCase() === "admin") return "admin";
+  return "alumno";
+}
+/* exige sesión válida con rol admin. Devuelve {session} o {err} */
+function requireAdmin(token){
+  const s = getSession(token);
+  if(!s) return { err: { ok:false, error:"unauthorized" } };
+  if(s.rol !== "admin") return { err: { ok:false, error:"forbidden" } };
+  return { session: s };
+}
+
 /* utilidad opcional: agregar un correo desde el editor (Ejecutar) */
 function addAllowed(){
   const email = "correo@gmail.com"; // ← cambia esto y ejecuta esta función
@@ -124,7 +164,7 @@ function getSession(token){
   const usersSh = sheet("Users", ["email","nombre","picture","grado","created_at"]);
   const users = rowsAsObjects(usersSh);
   const user = users.find(u=> u.email === row.email) || {};
-  return { email: row.email, nombre: user.nombre || row.email, picture: user.picture || "" };
+  return { email: row.email, nombre: user.nombre || row.email, picture: user.picture || "", rol: getUserRole(row.email) };
 }
 
 /* ---------------- acciones ---------------- */
@@ -167,7 +207,7 @@ function actionLogin(body){
     const sessSh = sheet("Sessions", ["token","email","created_at","expires_at"]);
     sessSh.appendRow([token, info.email, Date.now(), Date.now() + SESSION_DAYS*86400000]);
 
-    return { ok:true, token, email:info.email, nombre:info.name||info.email, picture:info.picture||"" };
+    return { ok:true, token, email:info.email, nombre:info.name||info.email, picture:info.picture||"", rol: getUserRole(info.email) };
   } finally { lock.releaseLock(); }
 }
 
@@ -264,6 +304,57 @@ function actionGetMessages(body){
   return { ok:true, messages: rows, lastId };
 }
 
+/* ---------------- acciones de ADMIN ---------------- */
+// devuelve el rol del usuario actual (para refrescar la UI sin re-login)
+function actionWhoami(body){
+  const s = getSession(body.token);
+  if(!s) return { ok:false, error:"unauthorized" };
+  return { ok:true, email:s.email, nombre:s.nombre, rol:s.rol };
+}
+
+// borrar un mensaje del chat por id (solo admin)
+function actionDeleteMessage(body){
+  const g = requireAdmin(body.token); if(g.err) return g.err;
+  const lock = LockService.getScriptLock();
+  lock.waitLock(10000);
+  try{
+    const sh = sheet("Messages", ["id","email","nombre","text","created_at"]);
+    const idx = findRowIndex(sh, "id", Number(body.id));
+    if(idx > -1) sh.deleteRow(idx);
+    return { ok:true };
+  } finally { lock.releaseLock(); }
+}
+
+// reiniciar el ranking: borra todos los puntajes (solo admin)
+function actionResetRanking(body){
+  const g = requireAdmin(body.token); if(g.err) return g.err;
+  const lock = LockService.getScriptLock();
+  lock.waitLock(10000);
+  try{
+    const sh = sheet("Scores", ["email","nombre","puntaje","total","pct","duracion","created_at"]);
+    const last = sh.getLastRow();
+    if(last > 1) sh.deleteRows(2, last - 1);
+    return { ok:true };
+  } finally { lock.releaseLock(); }
+}
+
+// lista de inscritos (usuarios que han entrado) con su última conexión (solo admin)
+function actionGetUsers(body){
+  const g = requireAdmin(body.token); if(g.err) return g.err;
+  const users = rowsAsObjects(sheet("Users", ["email","nombre","picture","grado","created_at"]));
+  const presence = rowsAsObjects(sheet("Presence", ["email","nombre","picture","last_seen"]));
+  const lastSeen = {};
+  presence.forEach(p=> { lastSeen[p.email] = Number(p.last_seen) || 0; });
+  const out = users.map(u=> ({
+    email: u.email,
+    nombre: u.nombre,
+    created_at: u.created_at,
+    last_seen: lastSeen[u.email] || 0,
+    rol: getUserRole(u.email),
+  })).sort((a,b)=> (b.last_seen||0) - (a.last_seen||0));
+  return { ok:true, users: out, permitidos: allowedEmails().length };
+}
+
 /* ---------------- enrutador ---------------- */
 function doPost(e){
   let body = {};
@@ -278,6 +369,10 @@ function doPost(e){
     getRanking: actionGetRanking,
     sendMessage: actionSendMessage,
     getMessages: actionGetMessages,
+    whoami: actionWhoami,
+    deleteMessage: actionDeleteMessage,
+    resetRanking: actionResetRanking,
+    getUsers: actionGetUsers,
   };
   const fn = handlers[body.action];
   const result = fn ? fn(body) : { ok:false, error:"unknown-action" };
