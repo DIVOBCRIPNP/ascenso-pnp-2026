@@ -1,0 +1,91 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Ingresar — Ascenso PNP 2026</title>
+<meta name="description" content="Acceso a la plataforma de estudio del proceso de ascenso PNP 2026, Promoción 2027.">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Lora:wght@500;600;700&family=Inter:wght@400;500;600;700;800&display=swap">
+<link rel="stylesheet" href="styles.css">
+</head>
+<body class="auth-body">
+
+<main class="auth-wrap">
+  <div class="auth-card card">
+    <div class="auth-head">
+      <span class="brand-badge">PNP</span>
+      <div>
+        <h1 class="auth-title">Ascenso 2026 · Promoción 2027</h1>
+        <p class="auth-sub">Plataforma de estudio — Oficiales Subalternos de Armas</p>
+      </div>
+    </div>
+
+    <div id="auth-notice" class="auth-notice" hidden></div>
+
+    <p class="auth-sub" style="margin-bottom:18px">Ingresa con tu cuenta de Google. Es rápido y no necesitas crear otra contraseña.</p>
+
+    <div id="gsi-button" style="display:flex;justify-content:center;min-height:44px"></div>
+
+    <div id="auth-msg" class="auth-msg" role="alert" aria-live="polite"></div>
+
+    <p class="auth-foot">Acceso restringido a la promoción. Si tu cuenta no está autorizada, pide al administrador que la habilite.</p>
+  </div>
+</main>
+
+<script src="https://accounts.google.com/gsi/client" async defer></script>
+<script src="config.js"></script>
+<script src="auth.js"></script>
+<script>
+(function(){
+  "use strict";
+  const cfg = window.APP_CONFIG || {};
+  const $ = id => document.getElementById(id);
+  const msg = $("auth-msg");
+  const notice = $("auth-notice");
+
+  if(!window.Auth.configured()){
+    notice.hidden = false;
+    notice.innerHTML = "⚠️ Falta configurar el acceso. Edita <b>config.js</b> con tu Client ID de Google y la URL de Apps Script (ver README).";
+    return;
+  }
+
+  // Si ya hay sesión local, entra directo
+  if(window.Auth.getSession()){
+    window.location.replace("index.html");
+    return;
+  }
+
+  function showError(t){ msg.className = "auth-msg error"; msg.textContent = t; }
+  function showOk(t){ msg.className = "auth-msg ok"; msg.textContent = t; }
+
+  window.handleCredentialResponse = async function(response){
+    showOk("Verificando…");
+    const r = await window.Auth.loginWithGoogleCredential(response.credential);
+    if(!r.ok){
+      let m = "No se pudo iniciar sesión.";
+      if(r.error === "not-allowed") m = "Tu cuenta no está autorizada para esta plataforma. Pide al administrador que la habilite.";
+      if(r.error === "invalid-token") m = "No se pudo verificar tu cuenta de Google. Intenta de nuevo.";
+      showError(m);
+      return;
+    }
+    showOk("Bienvenido, " + (r.session.nombre || r.session.email) + ". Entrando…");
+    setTimeout(()=> window.location.replace("index.html"), 400);
+  };
+
+  function initGoogle(){
+    if(!window.google || !window.google.accounts){ return setTimeout(initGoogle, 150); }
+    google.accounts.id.initialize({
+      client_id: cfg.GOOGLE_CLIENT_ID,
+      callback: window.handleCredentialResponse,
+    });
+    google.accounts.id.renderButton($("gsi-button"), {
+      theme: "outline", size: "large", shape: "pill", text: "continue_with", width: 300,
+    });
+  }
+  initGoogle();
+})();
+</script>
+</body>
+</html>

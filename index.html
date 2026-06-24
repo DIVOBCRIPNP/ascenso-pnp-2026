@@ -1,0 +1,45 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Ascenso PNP 2026 — Banco de Preguntas</title>
+<meta name="description" content="Plataforma de estudio con banco oficial de 1500 preguntas y simulacros cronometrados para el proceso de ascenso PNP 2026 — Oficiales Subalternos de Armas.">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Lora:wght@500;600;700&family=Inter:wght@400;500;600;700;800&display=swap">
+<link rel="stylesheet" href="styles.css">
+</head>
+<body>
+
+<header class="topbar">
+  <div class="brand" onclick="App.goHome()">
+    <span class="brand-badge">PNP</span>
+    <span class="brand-text">Ascenso 2026 · Oficiales Subalternos</span>
+  </div>
+  <nav class="topnav">
+    <button data-view="home" class="nav-btn active">Inicio</button>
+    <button data-view="banco" class="nav-btn">Banco</button>
+    <button data-view="hack" class="nav-btn">El Hack</button>
+    <button data-view="examen" class="nav-btn">Examen</button>
+    <button data-view="ranking" class="nav-btn">Ranking</button>
+    <button data-view="chat" class="nav-btn">Chat</button>
+    <button data-view="historial" class="nav-btn">Historial</button>
+    <span class="user-area">
+      <span id="user-chip" class="user-chip" hidden></span>
+      <button id="logout-btn" class="nav-btn" hidden>Salir</button>
+    </span>
+  </nav>
+</header>
+
+<main id="app"></main>
+
+<footer class="footnote">
+  Banco de 1500 preguntas oficiales del proceso de ascenso por concurso · Uso personal de estudio
+</footer>
+
+<script src="config.js"></script>
+<script src="auth.js"></script>
+<script src="app.js"></script>
+</body>
+</html>
