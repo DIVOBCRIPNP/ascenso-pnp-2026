@@ -879,7 +879,8 @@ function setupUserUI(){
   if(SESSION && window.Auth){
     if(chip){
       chip.hidden = false;
-      chip.innerHTML = escapeHtml(window.Auth.name(SESSION)) + (window.Auth.isAdmin() ? ' <span class="admin-badge">ADMIN</span>' : '');
+      const admin = (typeof window.Auth.isAdmin === "function") && window.Auth.isAdmin();
+      chip.innerHTML = escapeHtml(window.Auth.name(SESSION)) + (admin ? ' <span class="admin-badge">ADMIN</span>' : '');
     }
     if(logout){
       logout.hidden = false;
@@ -891,15 +892,21 @@ function setupUserUI(){
 (async function init(){
   $app.innerHTML = `<div class="empty">Verificando acceso…</div>`;
 
-  // Guard de sesión: si el acceso con Google está configurado, exige login
+  // Guard de sesión: si el acceso con Google está configurado, exige login.
+  // Todo va en try/catch: aunque algo de auth falle (p. ej. un auth.js viejo
+  // en caché tras un deploy), la app debe cargar igual el banco de preguntas.
   if(window.Auth && window.Auth.configured()){
     SESSION = window.Auth.requireAuth();
     if(!SESSION) return; // redirige a login.html
-    setupUserUI();
-    window.Auth.heartbeat();
-    setInterval(()=> window.Auth.heartbeat(), 20000);
-    // refresca el rol por si cambió en la hoja Permitidos desde el último login
-    window.Auth.refreshRole().then(()=>{ SESSION = window.Auth.getSession(); setupUserUI(); });
+    try{
+      setupUserUI();
+      window.Auth.heartbeat();
+      setInterval(()=> window.Auth.heartbeat(), 20000);
+      // refresca el rol por si cambió en la hoja Permitidos desde el último login
+      if(typeof window.Auth.refreshRole === "function"){
+        window.Auth.refreshRole().then(()=>{ SESSION = window.Auth.getSession(); setupUserUI(); }).catch(()=>{});
+      }
+    }catch(e){ console.warn("Aviso al iniciar la sesión:", e); }
   }
 
   $app.innerHTML = `<div class="empty">Cargando banco de preguntas…</div>`;
