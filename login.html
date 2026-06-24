@@ -26,7 +26,20 @@
 
     <p class="auth-sub" style="margin-bottom:18px">Ingresa con tu cuenta de Google. Es rápido y no necesitas crear otra contraseña.</p>
 
-    <div id="gsi-button" style="display:flex;justify-content:center;min-height:44px"></div>
+    <div id="captcha-box" class="captcha-box">
+      <label class="captcha-label" for="cap-input">Verificación: confirma que eres una persona</label>
+      <div class="captcha-row">
+        <span class="captcha-q" id="cap-q" aria-live="polite"></span>
+        <input id="cap-input" class="captcha-input" type="text" inputmode="numeric" autocomplete="off"
+               aria-label="Resultado de la operación" placeholder="?">
+        <button id="cap-btn" class="btn gold" type="button">Verificar</button>
+      </div>
+      <div id="cap-msg" class="captcha-msg" role="alert" aria-live="polite"></div>
+    </div>
+
+    <div id="login-area" hidden>
+      <div id="gsi-button" style="display:flex;justify-content:center;min-height:44px"></div>
+    </div>
 
     <div id="auth-msg" class="auth-msg" role="alert" aria-live="polite"></div>
 
@@ -84,7 +97,32 @@
       theme: "outline", size: "large", shape: "pill", text: "continue_with", width: 300,
     });
   }
-  initGoogle();
+
+  /* --- captcha simple "soy humano" (fricción ligera, no seguridad fuerte) --- */
+  let capAnswer = 0;
+  const capQ = $("cap-q"), capInput = $("cap-input"), capMsg = $("cap-msg");
+  function newCaptcha(){
+    const a = Math.floor(Math.random()*8)+2;   // 2..9
+    const b = Math.floor(Math.random()*8)+2;   // 2..9
+    capAnswer = a + b;
+    capQ.textContent = `¿Cuánto es ${a} + ${b}?`;
+    capInput.value = "";
+    capInput.focus();
+  }
+  function passCaptcha(){
+    if(parseInt(capInput.value, 10) === capAnswer){
+      $("captcha-box").hidden = true;
+      $("login-area").hidden = false;
+      initGoogle();
+    } else {
+      capMsg.className = "captcha-msg error";
+      capMsg.textContent = "Respuesta incorrecta, intenta de nuevo.";
+      newCaptcha();
+    }
+  }
+  $("cap-btn").onclick = passCaptcha;
+  capInput.addEventListener("keydown", e=>{ if(e.key === "Enter"){ e.preventDefault(); passCaptcha(); } });
+  newCaptcha();
 })();
 </script>
 </body>

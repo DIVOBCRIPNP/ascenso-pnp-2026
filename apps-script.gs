@@ -16,6 +16,13 @@
       Copia la URL que termina en /exec → pégala en config.js (APPS_SCRIPT_URL).
    6. Cada vez que edites este script, vuelve a Implementar → Gestionar
       implementaciones → ✏️ → Nueva versión, o la URL servirá código viejo.
+
+   CONTROL DE ACCESO (allowlist):
+   - El acceso se gestiona desde la hoja "Permitidos" (columna email).
+   - Solo los correos que pongas ahí podrán entrar. Si la hoja está vacía,
+     el acceso queda abierto a cualquier cuenta de Google.
+   - Agregar o quitar correos en esa hoja toma efecto al instante, NO hace
+     falta re-desplegar. (setup() siembra tu propio correo automáticamente.)
    ============================================================ */
 
 const CLIENT_ID = "PEGA_AQUI_TU_GOOGLE_CLIENT_ID.apps.googleusercontent.com";
@@ -43,7 +50,44 @@ function setup(){
   sheet("Scores",   ["email","nombre","puntaje","total","pct","duracion","created_at"]);
   sheet("Presence", ["email","nombre","picture","last_seen"]);
   sheet("Messages", ["id","email","nombre","text","created_at"]);
-  Logger.log("Listo. Hojas creadas: Users, Sessions, Scores, Presence, Messages.");
+  const permit = sheet("Permitidos", ["email","nombre","nota"]);
+  // siembra tu propio correo (el dueño del script) para que nunca te quedes fuera
+  try{
+    const owner = (Session.getEffectiveUser().getEmail() || "").trim().toLowerCase();
+    if(owner && findRowIndex(permit, "email", owner) === -1){
+      permit.appendRow([owner, "Administrador", "agregado automáticamente"]);
+    }
+  }catch(e){ /* sin permisos para leer el correo: ignora */ }
+  Logger.log("Listo. Hojas: Users, Sessions, Scores, Presence, Messages, Permitidos.");
+}
+
+/* ---------------- lista de permitidos (allowlist) ----------------
+   El acceso se controla desde la hoja "Permitidos" (columna email).
+   - Si la hoja tiene al menos un correo, SOLO esos correos pueden entrar.
+   - Si está vacía, el acceso queda ABIERTO (para no bloquearte antes de
+     configurarla). Agrega/quita filas en la hoja para gestionar el acceso;
+     NO necesitas re-desplegar el script para que tome efecto.
+*/
+function allowedEmails(){
+  const sh = sheet("Permitidos", ["email","nombre","nota"]);
+  return rowsAsObjects(sh)
+    .map(r=> String(r.email||"").trim().toLowerCase())
+    .filter(Boolean);
+}
+function isEmailAllowed(email){
+  email = String(email||"").trim().toLowerCase();
+  const list = allowedEmails();
+  if(list.length === 0) return true;       // lista vacía = abierto
+  return list.indexOf(email) !== -1;
+}
+/* utilidad opcional: agregar un correo desde el editor (Ejecutar) */
+function addAllowed(){
+  const email = "correo@gmail.com"; // ← cambia esto y ejecuta esta función
+  const sh = sheet("Permitidos", ["email","nombre","nota"]);
+  if(findRowIndex(sh, "email", email.trim().toLowerCase()) === -1){
+    sh.appendRow([email.trim().toLowerCase(), "", "agregado manual"]);
+  }
+  Logger.log("Permitidos: " + allowedEmails().join(", "));
 }
 
 /* ---------------- helpers de datos ---------------- */
@@ -101,6 +145,10 @@ function actionLogin(body){
   if(info.aud !== CLIENT_ID) return { ok:false, error:"invalid-token" };
   if(!info.email || info.email_verified !== "true") return { ok:false, error:"invalid-token" };
   if(ALLOWED_DOMAIN && info.hd !== ALLOWED_DOMAIN && info.email.split("@")[1] !== ALLOWED_DOMAIN){
+    return { ok:false, error:"not-allowed" };
+  }
+  // allowlist: solo los correos de la hoja "Permitidos" (si tiene alguno)
+  if(!isEmailAllowed(info.email)){
     return { ok:false, error:"not-allowed" };
   }
 

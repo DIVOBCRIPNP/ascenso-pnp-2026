@@ -395,6 +395,23 @@ input[type=number],select{
 }
 .auth-foot{text-align:center;font-size:12px;color:var(--ink-soft);margin:16px 0 0;}
 
+/* captcha simple "soy humano" */
+.captcha-box{
+  background:#fbfaf6;border:1.5px solid var(--line);border-radius:11px;
+  padding:14px 16px;margin-bottom:16px;
+}
+.captcha-label{display:block;font-size:13px;font-weight:600;color:var(--ink);margin-bottom:10px;}
+.captcha-row{display:flex;align-items:center;gap:10px;flex-wrap:wrap;}
+.captcha-q{font-size:16px;font-weight:800;color:var(--green-900);font-variant-numeric:tabular-nums;}
+.captcha-input{
+  width:80px;border:1.5px solid var(--line);border-radius:9px;
+  padding:9px 10px;font-size:16px;font-family:inherit;text-align:center;font-weight:700;
+}
+.captcha-input:focus{border-color:var(--green-600);outline:none;}
+.captcha-row .btn{padding:9px 16px;}
+.captcha-msg{font-size:12.5px;margin-top:8px;min-height:16px;font-weight:600;}
+.captcha-msg.error{color:var(--red);}
+
 /* ===== chat interno ===== */
 .chat-wrap{display:flex;gap:20px;align-items:flex-start;}
 .chat-online{width:220px;flex-shrink:0;}
