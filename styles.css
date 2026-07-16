@@ -441,18 +441,14 @@ input[type=number],select{
   background:var(--gold);color:var(--green-900);padding:3px 9px;border-radius:6px;
   letter-spacing:.3px;margin-left:8px;text-transform:uppercase;
 }
-.hack-letters{display:flex;gap:8px;margin-bottom:18px;flex-wrap:wrap;}
-.hack-letter{
-  display:flex;flex-direction:column;align-items:center;gap:2px;
-  min-width:64px;padding:10px 12px;border-radius:11px;
-  border:1.5px solid var(--line);background:#fff;transition:.12s;
+/* respuesta correcta destacada (ficha de memorización) */
+.hack-answer{
+  display:flex;align-items:flex-start;gap:9px;
+  background:var(--green-ok-bg);border:1.5px solid var(--green-ok);
+  color:var(--ink);font-weight:700;font-size:14px;line-height:1.45;
+  border-radius:9px;padding:11px 13px;margin-top:4px;
 }
-.hack-letter:hover{border-color:var(--gold);}
-.hack-letter .hl-letter{font-family:var(--font-head);font-size:22px;font-weight:800;color:var(--green-900);line-height:1;}
-.hack-letter .hl-count{font-size:11px;font-weight:700;color:var(--ink-soft);}
-.hack-letter.active{background:var(--green-700);border-color:var(--green-700);}
-.hack-letter.active .hl-letter{color:var(--gold-light);}
-.hack-letter.active .hl-count{color:#cfd8cf;}
+.hack-answer .icon{width:17px;height:17px;flex-shrink:0;color:var(--green-ok);margin-top:1px;}
 
 .hack-head{
   font-size:14px;color:var(--ink-soft);font-weight:600;margin:0 0 12px;
@@ -470,19 +466,6 @@ input[type=number],select{
   background:#f3e8d2;color:#8a6a23;font-weight:800;font-size:13px;
   display:inline-flex;align-items:center;justify-content:center;
 }
-.hack-opts{display:flex;flex-direction:column;gap:6px;margin-top:10px;}
-.hack-opt{
-  display:flex;align-items:flex-start;gap:10px;
-  padding:9px 12px;border:1.5px solid var(--line);border-radius:8px;
-  font-size:13.5px;line-height:1.4;background:#fbfaf6;color:var(--ink-soft);
-}
-.hack-opt .letter{
-  width:22px;height:22px;border-radius:50%;border:1.5px solid var(--line);
-  display:flex;align-items:center;justify-content:center;font-size:11px;font-weight:800;
-  flex-shrink:0;color:var(--ink-soft);background:#fff;
-}
-.hack-opt.correct{border-color:var(--green-ok);background:var(--green-ok-bg);color:var(--ink);font-weight:600;}
-.hack-opt.correct .letter{background:var(--green-ok);color:#fff;border-color:var(--green-ok);}
 
 /* ===== roles / administrador ===== */
 .admin-badge{
@@ -543,9 +526,8 @@ input[type=number],select{
   .hero h1{font-size:24px;}
   .stat-row{gap:18px;}
 
-  /* el hack: selector de letras se ajusta */
-  .hack-letters{gap:6px;}
-  .hack-letter{min-width:54px;padding:9px 8px;}
+  /* el hack: selector de materia a ancho completo */
+  .filters select{width:100%;}
 }
 
 /* ===== móvil estrecho ===== */
@@ -553,6 +535,5 @@ input[type=number],select{
   .brand-text{display:none;}                 /* solo el badge PNP, ahorra espacio */
   .nav-btn{padding:8px 10px;font-size:12px;}
   h1{font-size:22px;}
-  .hack-letter{min-width:0;flex:1;}          /* las 5 letras reparten el ancho */
   .admin-panel .btn-row .btn{flex:1;}        /* botones admin a ancho completo */
 }

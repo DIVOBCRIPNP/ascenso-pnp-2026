@@ -246,25 +246,27 @@ function renderEstudio(){
   document.getElementById("next-study").onclick = ()=>{ studyState.idx++; studyState.answered=null; renderEstudio(); };
 }
 
-/* ---------------- EL HACK (preguntas agrupadas por letra de respuesta) ---------------- */
-let hackLetter = 0;       // índice de letra activa: 0=A,1=B,...
-let hackGrupo = "todas";  // filtro de grupo
-let hackHide = false;     // modo auto-evaluación: oculta respuestas hasta revelar
+/* ---------------- EL HACK (fichas de memorización: pregunta → respuesta) ----------------
+   Nota: en el examen real las opciones se barajan, así que memorizar letras (A/B/C)
+   no sirve. Lo que sí sirve es memorizar el TEXTO de la respuesta correcta.
+   Este modo muestra cada pregunta con SOLO su respuesta correcta (sin distractores),
+   en orden correlativo y agrupado por materia. */
+let hackGrupo = "todas";      // filtro de grupo
+let hackMateria = "todas";    // materia seleccionada
+let hackHide = false;         // modo auto-evaluación: oculta respuestas hasta revelar
 let hackRevealed = new Set(); // índices revelados en el grupo actual
 function renderHack(){
-  const LETRAS = "ABCDE";
   const pool = DATA.filter(q=> hackGrupo==="todas" || q.grupo===hackGrupo);
-  // conteo por letra dentro del pool filtrado
-  const counts = [0,0,0,0,0];
-  pool.forEach(q=>{ if(q.correcta>=0 && q.correcta<5) counts[q.correcta]++; });
-  if(counts[hackLetter]===0){ hackLetter = counts.findIndex(c=>c>0); if(hackLetter<0) hackLetter=0; }
-
-  const qs = pool.filter(q=> q.correcta===hackLetter);
+  const materias = MATERIAS.filter(m=> hackGrupo==="todas" || m.grupo===hackGrupo);
+  if(hackMateria!=="todas" && !materias.some(m=>m.materia===hackMateria)) hackMateria = "todas";
+  const qs = (hackMateria==="todas" ? pool : pool.filter(q=> q.materia===hackMateria))
+    .slice().sort((a,b)=> (a.n||0)-(b.n||0)); // orden correlativo del banco
 
   $app.innerHTML = `
-    <h1>El Hack <span class="hack-tag">técnica de memorización</span></h1>
-    <p class="subtitle">Estudia todas las preguntas <b>agrupadas por la letra de su respuesta correcta</b>, en orden correlativo.
-    Primero todas las que se responden <b>A</b>, luego las <b>B</b>, y así sucesivamente. La respuesta correcta va resaltada en cada una.</p>
+    <h1>El Hack <span class="hack-tag">memorización directa</span></h1>
+    <p class="subtitle">Cada pregunta con <b>solo su respuesta correcta</b>, sin distractores, en orden correlativo.
+    En el examen las opciones cambian de letra, así que lo que se memoriza es el <b>texto</b> de la respuesta, no la letra.
+    Actívalo en modo auto-evaluación para taparte las respuestas y comprobarte.</p>
 
     <div class="section-toggle">
       <button data-g="todas" class="${hackGrupo==='todas'?'active':''}">Todas (${DATA.length})</button>
@@ -272,15 +274,15 @@ function renderHack(){
       <button data-g="Materias de Especialidad" class="${hackGrupo==='Materias de Especialidad'?'active':''}">Especialidad</button>
     </div>
 
-    <div class="hack-letters" id="hack-letters">
-      ${LETRAS.split("").map((L,i)=> counts[i]===0 ? "" :
-        `<button class="hack-letter ${i===hackLetter?'active':''}" data-l="${i}">
-           <span class="hl-letter">${L}</span><span class="hl-count">${counts[i]}</span>
-         </button>`).join("")}
+    <div class="filters">
+      <select id="hack-materia" aria-label="Filtrar por materia">
+        <option value="todas">Todas las materias (${pool.length} preguntas)</option>
+        ${materias.map(m=>`<option value="${escapeHtml(m.materia)}" ${m.materia===hackMateria?'selected':''}>${escapeHtml(shortMateria(m.materia))} (${m.count})</option>`).join("")}
+      </select>
     </div>
 
     <div class="hack-head">
-      <span>Respuesta <b>${LETRAS[hackLetter]}</b> · ${qs.length} pregunta${qs.length===1?'':'s'}</span>
+      <span>${qs.length} pregunta${qs.length===1?'':'s'}${hackMateria!=="todas" ? " · "+escapeHtml(shortMateria(hackMateria)) : ""}</span>
       <button class="mark-btn ${hackHide?'marked':''}" id="hack-mode" aria-pressed="${hackHide?'true':'false'}">
         ${svg(hackHide?'eye':'check')} ${hackHide?'Modo auto-evaluación: ON':'Modo auto-evaluación: OFF'}
       </button>
@@ -289,24 +291,24 @@ function renderHack(){
   `;
 
   document.querySelectorAll(".section-toggle button").forEach(b=>{
-    b.onclick = ()=>{ hackGrupo = b.dataset.g; hackRevealed.clear(); renderHack(); };
+    b.onclick = ()=>{ hackGrupo = b.dataset.g; hackMateria = "todas"; hackRevealed.clear(); renderHack(); };
   });
-  document.querySelectorAll(".hack-letter").forEach(b=>{
-    b.onclick = ()=>{ hackLetter = +b.dataset.l; hackRevealed.clear(); renderHack(); window.scrollTo({top:0,behavior:"smooth"}); };
-  });
+  document.getElementById("hack-materia").onchange = (e)=>{
+    hackMateria = e.target.value; hackRevealed.clear(); renderHack(); window.scrollTo({top:0,behavior:"smooth"});
+  };
   document.getElementById("hack-mode").onclick = ()=>{ hackHide = !hackHide; hackRevealed.clear(); renderHack(); };
 
   const list = document.getElementById("hack-list");
-  list.innerHTML = qs.map((q,n)=>{
+  // por rendimiento: si son demasiadas, renderiza por bloques con botón "cargar más"
+  const PAGE = 200;
+  let shownCount = Math.min(PAGE, qs.length);
+
+  function cardHTML(q, n){
     const shown = !hackHide || hackRevealed.has(n);
-    const opts = q.opciones.map((o,i)=>{
-      const ok = i===q.correcta;
-      const mark = (ok && shown) ? " correct" : "";
-      return `<div class="hack-opt${mark}"><span class="letter">${"ABCDE"[i]||i+1}</span><span>${escapeHtml(o)}${ok&&shown?' ✓':''}</span></div>`;
-    }).join("");
-    const footer = (hackHide && !shown)
-      ? `<button class="btn outline hack-reveal" data-n="${n}" style="margin-top:10px">${svg("eye")} Ver respuesta</button>`
-      : (q.ubicacion ? `<div class="legal" style="margin-top:8px">Base legal: ${escapeHtml(q.ubicacion)}</div>` : "");
+    const answer = shown
+      ? `<div class="hack-answer">${svg("check")} <span>${escapeHtml(q.respuesta || q.opciones[q.correcta] || "")}</span></div>
+         ${q.ubicacion ? `<div class="legal" style="margin-top:6px">Base legal: ${escapeHtml(q.ubicacion)}</div>` : ""}`
+      : `<button class="btn outline hack-reveal" data-n="${n}" style="margin-top:4px">${svg("eye")} Ver respuesta</button>`;
     return `
       <div class="hack-card">
         <div class="hack-q-top">
@@ -314,14 +316,21 @@ function renderHack(){
           <span class="qmeta">${shortMateria(q.materia)}</span>
         </div>
         <div class="qtext" style="font-size:15px">${escapeHtml(q.pregunta)}</div>
-        <div class="hack-opts">${opts}</div>
-        ${footer}
+        ${answer}
       </div>`;
-  }).join("");
-
-  list.querySelectorAll(".hack-reveal").forEach(b=>{
-    b.onclick = ()=>{ hackRevealed.add(+b.dataset.n); renderHack(); };
-  });
+  }
+  function paint(){
+    list.innerHTML = qs.slice(0, shownCount).map((q,n)=> cardHTML(q,n)).join("")
+      + (shownCount < qs.length
+          ? `<div class="btn-row" style="justify-content:center"><button class="btn" id="hack-more">Cargar ${Math.min(PAGE, qs.length-shownCount)} más (${qs.length-shownCount} restantes)</button></div>`
+          : "");
+    list.querySelectorAll(".hack-reveal").forEach(b=>{
+      b.onclick = ()=>{ hackRevealed.add(+b.dataset.n); paint(); };
+    });
+    const more = document.getElementById("hack-more");
+    if(more) more.onclick = ()=>{ shownCount = Math.min(shownCount+PAGE, qs.length); paint(); };
+  }
+  paint();
 }
 
 /* ---------------- EXAMEN: configuracion ---------------- */
