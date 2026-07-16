@@ -10,6 +10,21 @@ const configured = !!(
 
 const LS_SESSION = "pnp_session";
 
+/* Guardado diferido del progreso: agrupa ráfagas de cambios en una sola
+   escritura para no gastar la cuota diaria de Apps Script. */
+let pendingProgress = null;
+let saveTimer = null;
+async function flushProgress(){
+  if(saveTimer){ clearTimeout(saveTimer); saveTimer = null; }
+  if(!pendingProgress) return;
+  const data = pendingProgress;
+  pendingProgress = null;
+  const s = getLocalSession();
+  if(!s || !s.token) return;
+  const r = await api("saveProgress", { token:s.token, data });
+  if(r && r.error === "too-big") console.warn("Progreso demasiado grande para guardar en la nube.");
+}
+
 function getLocalSession(){
   try{ return JSON.parse(localStorage.getItem(LS_SESSION)); }catch(e){ return null; }
 }
@@ -76,6 +91,26 @@ const Auth = {
       setLocalSession(s);
     }
   },
+
+  // Progreso personal del usuario (se recupera en cualquier dispositivo)
+  async getProgress(){
+    const s = getLocalSession();
+    if(!s) return null;
+    const r = await api("getProgress", { token:s.token });
+    return (r.ok && r.data) ? r.data : null;
+  },
+
+  // Guarda el progreso. Se agrupa (debounce) para no gastar cuota de Apps Script.
+  saveProgress(data){
+    const s = getLocalSession();
+    if(!s) return;
+    pendingProgress = data;
+    if(saveTimer) clearTimeout(saveTimer);
+    saveTimer = setTimeout(flushProgress, 1500);
+  },
+
+  // Fuerza el guardado inmediato (p. ej. antes de cerrar la pestaña)
+  flushProgress(){ return flushProgress(); },
 
   async deleteMessage(id){
     const s = getLocalSession();

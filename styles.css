@@ -450,11 +450,26 @@ input[type=number],select{
 }
 .hack-answer .icon{width:17px;height:17px;flex-shrink:0;color:var(--green-ok);margin-top:1px;}
 
+/* barra de "dominadas" (progreso real de memorización del usuario) */
+.hack-progress{margin:0 0 16px;}
+.hack-progress .pmeta{
+  display:flex;justify-content:space-between;align-items:baseline;
+  font-size:12.5px;font-weight:600;color:var(--ink-soft);margin-bottom:7px;
+}
+.hack-progress .pmeta b{color:var(--green-700);font-size:15px;}
+.pbar-track{width:100%;height:8px;background:#e2e0d6;border-radius:99px;overflow:hidden;}
+.pbar-fill{height:100%;background:linear-gradient(90deg,var(--green-ok),var(--gold));border-radius:99px;transition:width .4s;}
+
 .hack-head{
   font-size:14px;color:var(--ink-soft);font-weight:600;margin:0 0 12px;
   padding-bottom:8px;border-bottom:1px solid var(--line);
   display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap;
 }
+.hack-actions{display:flex;gap:8px;flex-wrap:wrap;}
+.hack-know{font-size:12px;padding:6px 10px;min-height:0;margin-left:auto;flex-shrink:0;}
+.hack-know .icon{width:13px;height:13px;}
+.hack-card.known{border-color:var(--green-ok);background:#fbfdfb;}
+.hack-card.known .hack-num{background:var(--green-ok-bg);color:var(--green-ok);}
 .hack-head b{color:var(--green-900);font-size:16px;}
 .hack-card{
   background:var(--card);border:1px solid var(--line);border-radius:10px;

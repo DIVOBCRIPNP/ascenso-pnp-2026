@@ -51,6 +51,7 @@ function setup(){
   sheet("Scores",   ["email","nombre","puntaje","total","pct","duracion","created_at"]);
   sheet("Presence", ["email","nombre","picture","last_seen"]);
   sheet("Messages", ["id","email","nombre","text","created_at"]);
+  sheet("Progreso", ["email","data","updated_at"]);
   const permit = sheet("Permitidos", ["email","nombre","rol","nota"]);
   ensureColumn(permit, "rol");   // migra hojas antiguas que no tenían columna rol
   ensureColumn(permit, "nota");
@@ -304,6 +305,39 @@ function actionGetMessages(body){
   return { ok:true, messages: rows, lastId };
 }
 
+/* ---------------- progreso por usuario (memoria personal) ----------------
+   Cada usuario tiene UNA fila en la hoja "Progreso" con un JSON de su avance
+   (historial de simulacros, fichas dominadas, etc.). Va atado a su correo, así
+   que lo recupera desde cualquier dispositivo al iniciar sesión con Google. */
+function actionGetProgress(body){
+  const session = getSession(body.token);
+  if(!session) return { ok:false, error:"unauthorized" };
+  const sh = sheet("Progreso", ["email","data","updated_at"]);
+  const idx = findRowIndex(sh, "email", session.email);
+  if(idx === -1) return { ok:true, data:{} };
+  let data = {};
+  try{ data = JSON.parse(sh.getRange(idx, 2).getValue() || "{}"); }catch(e){ data = {}; }
+  return { ok:true, data: data };
+}
+
+function actionSaveProgress(body){
+  const session = getSession(body.token);
+  if(!session) return { ok:false, error:"unauthorized" };
+  // Límite de celda de Sheets: 50 000 caracteres. Cortamos antes por seguridad.
+  const json = JSON.stringify(body.data || {});
+  if(json.length > 45000) return { ok:false, error:"too-big" };
+  const lock = LockService.getScriptLock();
+  lock.waitLock(10000);
+  try{
+    const sh = sheet("Progreso", ["email","data","updated_at"]);
+    const idx = findRowIndex(sh, "email", session.email);
+    const now = new Date().toISOString();
+    if(idx === -1) sh.appendRow([session.email, json, now]);
+    else sh.getRange(idx, 2, 1, 2).setValues([[json, now]]);
+    return { ok:true };
+  } finally { lock.releaseLock(); }
+}
+
 /* ---------------- acciones de ADMIN ---------------- */
 // devuelve el rol del usuario actual (para refrescar la UI sin re-login)
 function actionWhoami(body){
@@ -370,6 +404,8 @@ function doPost(e){
     sendMessage: actionSendMessage,
     getMessages: actionGetMessages,
     whoami: actionWhoami,
+    getProgress: actionGetProgress,
+    saveProgress: actionSaveProgress,
     deleteMessage: actionDeleteMessage,
     resetRanking: actionResetRanking,
     getUsers: actionGetUsers,

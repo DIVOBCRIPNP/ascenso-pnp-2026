@@ -2,13 +2,65 @@
 (function(){
 "use strict";
 
-const LS_HISTORY = "pnp_historial";
-const LS_EXAM = "pnp_examen_actual";
-const LS_STUDY = "pnp_estudio_progreso";
+/* ---------------- memoria por usuario ----------------
+   Las claves de localStorage se namespacian con el correo del usuario para que
+   en un equipo compartido cada quien vea SOLO su progreso. Además, el progreso
+   (historial + fichas dominadas) se sincroniza con la hoja "Progreso" del
+   backend, así el usuario lo recupera desde cualquier dispositivo. */
+let USER_KEY = "anon";                 // se fija al iniciar sesión
+const ns = (k)=> `pnp_${k}__${USER_KEY}`;
+const LS_HISTORY = ()=> ns("historial");
+const LS_EXAM    = ()=> ns("examen_actual");
+const LS_DOMINADAS = ()=> ns("dominadas");
+
+function lsGet(key, fallback){
+  try{ const v = JSON.parse(localStorage.getItem(key)); return v==null ? fallback : v; }
+  catch(e){ return fallback; }
+}
+function lsSet(key, value){
+  try{ localStorage.setItem(key, JSON.stringify(value)); }catch(e){}
+}
+
+/* Sube a la nube el progreso del usuario (historial + dominadas).
+   Nunca debe romper la UI: si la nube no está disponible (o el navegador tiene
+   un auth.js viejo en caché tras un deploy), el progreso local sigue funcionando. */
+function syncProgress(){
+  try{
+    if(!window.Auth || !window.Auth.configured() || !SESSION) return;
+    if(typeof window.Auth.saveProgress !== "function") return;
+    window.Auth.saveProgress({
+      historial: getHistory(),
+      dominadas: Array.from(dominadas),
+    });
+  }catch(e){ console.warn("No se pudo sincronizar el progreso:", e); }
+}
+
+/* Descarga el progreso de la nube y lo fusiona con lo que haya en este equipo.
+   Criterio de fusión: se unen ambos (unión de dominadas, historial más largo),
+   así nada se pierde si estudió sin conexión o desde otro dispositivo. */
+async function loadProgressFromCloud(){
+  if(!window.Auth || !window.Auth.configured() || !SESSION) return;
+  if(typeof window.Auth.getProgress !== "function") return;
+  let remote = null;
+  try{ remote = await window.Auth.getProgress(); }catch(e){ return; }
+  if(!remote) return;
+
+  if(Array.isArray(remote.dominadas)){
+    remote.dominadas.forEach(n=> dominadas.add(n));
+    lsSet(LS_DOMINADAS(), Array.from(dominadas));
+  }
+  if(Array.isArray(remote.historial)){
+    const local = getHistory();
+    if(remote.historial.length > local.length){
+      lsSet(LS_HISTORY(), remote.historial.slice(0,50));
+    }
+  }
+}
 
 let DATA = [];           // todas las preguntas
 let MATERIAS = [];       // [{materia, grupo, count}]
-let SESSION = null;      // sesión Supabase del usuario
+let SESSION = null;      // sesión del usuario (Google)
+let dominadas = new Set(); // n° de preguntas marcadas como "ya me la sé" (El Hack)
 let view = "home";
 let examState = null;    // estado de examen en curso
 let studyState = null;   // estado de modo estudio
@@ -254,13 +306,17 @@ function renderEstudio(){
 let hackGrupo = "todas";      // filtro de grupo
 let hackMateria = "todas";    // materia seleccionada
 let hackHide = false;         // modo auto-evaluación: oculta respuestas hasta revelar
+let hackPendientes = false;   // mostrar solo las que aún no domino
 let hackRevealed = new Set(); // índices revelados en el grupo actual
 function renderHack(){
   const pool = DATA.filter(q=> hackGrupo==="todas" || q.grupo===hackGrupo);
   const materias = MATERIAS.filter(m=> hackGrupo==="todas" || m.grupo===hackGrupo);
   if(hackMateria!=="todas" && !materias.some(m=>m.materia===hackMateria)) hackMateria = "todas";
-  const qs = (hackMateria==="todas" ? pool : pool.filter(q=> q.materia===hackMateria))
+  let qs = (hackMateria==="todas" ? pool : pool.filter(q=> q.materia===hackMateria))
     .slice().sort((a,b)=> (a.n||0)-(b.n||0)); // orden correlativo del banco
+  const totalEnFiltro = qs.length;
+  const dominadasEnFiltro = qs.filter(q=> dominadas.has(q.n)).length;
+  if(hackPendientes) qs = qs.filter(q=> !dominadas.has(q.n));
 
   $app.innerHTML = `
     <h1>El Hack <span class="hack-tag">memorización directa</span></h1>
@@ -281,11 +337,26 @@ function renderHack(){
       </select>
     </div>
 
+    <div class="hack-progress">
+      <div class="pmeta">
+        <span><b>${dominadasEnFiltro}</b> de ${totalEnFiltro} dominadas</span>
+        <span>${totalEnFiltro ? Math.round(dominadasEnFiltro/totalEnFiltro*100) : 0}%</span>
+      </div>
+      <div class="pbar-track" role="progressbar" aria-valuenow="${dominadasEnFiltro}" aria-valuemin="0" aria-valuemax="${totalEnFiltro}" aria-label="Preguntas dominadas">
+        <div class="pbar-fill" style="width:${totalEnFiltro ? (dominadasEnFiltro/totalEnFiltro*100) : 0}%"></div>
+      </div>
+    </div>
+
     <div class="hack-head">
       <span>${qs.length} pregunta${qs.length===1?'':'s'}${hackMateria!=="todas" ? " · "+escapeHtml(shortMateria(hackMateria)) : ""}</span>
-      <button class="mark-btn ${hackHide?'marked':''}" id="hack-mode" aria-pressed="${hackHide?'true':'false'}">
-        ${svg(hackHide?'eye':'check')} ${hackHide?'Modo auto-evaluación: ON':'Modo auto-evaluación: OFF'}
-      </button>
+      <div class="hack-actions">
+        <button class="mark-btn ${hackPendientes?'marked':''}" id="hack-pend" aria-pressed="${hackPendientes?'true':'false'}">
+          ${svg("star")} ${hackPendientes?'Solo pendientes':'Ver todas'}
+        </button>
+        <button class="mark-btn ${hackHide?'marked':''}" id="hack-mode" aria-pressed="${hackHide?'true':'false'}">
+          ${svg(hackHide?'eye':'check')} ${hackHide?'Auto-evaluación: ON':'Auto-evaluación: OFF'}
+        </button>
+      </div>
     </div>
     <div id="hack-list"></div>
   `;
@@ -297,6 +368,7 @@ function renderHack(){
     hackMateria = e.target.value; hackRevealed.clear(); renderHack(); window.scrollTo({top:0,behavior:"smooth"});
   };
   document.getElementById("hack-mode").onclick = ()=>{ hackHide = !hackHide; hackRevealed.clear(); renderHack(); };
+  document.getElementById("hack-pend").onclick = ()=>{ hackPendientes = !hackPendientes; hackRevealed.clear(); renderHack(); };
 
   const list = document.getElementById("hack-list");
   // por rendimiento: si son demasiadas, renderiza por bloques con botón "cargar más"
@@ -305,27 +377,47 @@ function renderHack(){
 
   function cardHTML(q, n){
     const shown = !hackHide || hackRevealed.has(n);
+    const known = dominadas.has(q.n);
     const answer = shown
       ? `<div class="hack-answer">${svg("check")} <span>${escapeHtml(q.respuesta || q.opciones[q.correcta] || "")}</span></div>
          ${q.ubicacion ? `<div class="legal" style="margin-top:6px">Base legal: ${escapeHtml(q.ubicacion)}</div>` : ""}`
       : `<button class="btn outline hack-reveal" data-n="${n}" style="margin-top:4px">${svg("eye")} Ver respuesta</button>`;
     return `
-      <div class="hack-card">
+      <div class="hack-card${known?' known':''}">
         <div class="hack-q-top">
           <span class="hack-num">${n+1}</span>
           <span class="qmeta">${shortMateria(q.materia)}</span>
+          <button class="mark-btn hack-know ${known?'marked':''}" data-q="${q.n}" aria-pressed="${known?'true':'false'}"
+                  title="${known?'Marcada como dominada':'Marcar como dominada'}">
+            ${svg("check")} ${known?'Ya me la sé':'Marcar'}
+          </button>
         </div>
         <div class="qtext" style="font-size:15px">${escapeHtml(q.pregunta)}</div>
         ${answer}
       </div>`;
   }
   function paint(){
+    if(!qs.length){
+      list.innerHTML = `<div class="card"><div class="empty">${hackPendientes
+        ? "¡Felicitaciones! Ya dominas todas las preguntas de este filtro."
+        : "No hay preguntas con este filtro."}</div></div>`;
+      return;
+    }
     list.innerHTML = qs.slice(0, shownCount).map((q,n)=> cardHTML(q,n)).join("")
       + (shownCount < qs.length
           ? `<div class="btn-row" style="justify-content:center"><button class="btn" id="hack-more">Cargar ${Math.min(PAGE, qs.length-shownCount)} más (${qs.length-shownCount} restantes)</button></div>`
           : "");
     list.querySelectorAll(".hack-reveal").forEach(b=>{
       b.onclick = ()=>{ hackRevealed.add(+b.dataset.n); paint(); };
+    });
+    list.querySelectorAll(".hack-know").forEach(b=>{
+      b.onclick = ()=>{
+        const qn = Number(b.dataset.q);
+        if(dominadas.has(qn)) dominadas.delete(qn); else dominadas.add(qn);
+        lsSet(LS_DOMINADAS(), Array.from(dominadas));
+        syncProgress();          // guarda en la cuenta del usuario (diferido)
+        renderHack();            // refresca barra de progreso y filtro
+      };
     });
     const more = document.getElementById("hack-more");
     if(more) more.onclick = ()=>{ shownCount = Math.min(shownCount+PAGE, qs.length); paint(); };
@@ -432,7 +524,7 @@ function startExam(total, minutes, timerOn){
 }
 
 function saveExamState(){
-  try{ localStorage.setItem(LS_EXAM, JSON.stringify(examState)); }catch(e){}
+  lsSet(LS_EXAM(), examState);
 }
 
 let quizTimerId = null;
@@ -638,20 +730,20 @@ function renderResultados(){
 }
 
 /* ---------------- HISTORIAL ---------------- */
-function getHistory(){
-  try{ return JSON.parse(localStorage.getItem(LS_HISTORY)) || []; }catch(e){ return []; }
-}
+function getHistory(){ return lsGet(LS_HISTORY(), []); }
 function saveHistoryEntry(result){
   const hist = getHistory();
   hist.unshift({date:result.date, score:result.correct, total:result.total, pct:result.pct});
   if(hist.length>50) hist.length = 50;
-  try{ localStorage.setItem(LS_HISTORY, JSON.stringify(hist)); }catch(e){}
+  lsSet(LS_HISTORY(), hist);
+  syncProgress();
 }
 function renderHistorial(){
   const hist = getHistory();
+  const cloud = window.Auth && window.Auth.configured() && SESSION;
   $app.innerHTML = `
     <h1>Historial de simulacros</h1>
-    <p class="subtitle">Tus últimos resultados, guardados en este navegador.</p>
+    <p class="subtitle">Tus últimos resultados${cloud ? `, guardados en tu cuenta (${escapeHtml(SESSION.email)}). Los verás en cualquier dispositivo donde inicies sesión.` : ", guardados en este navegador."}</p>
     <div class="card">
       ${hist.length ? hist.map(h=>`
         <div class="history-item">
@@ -670,8 +762,9 @@ function renderHistorial(){
   if(goExam) goExam.onclick = ()=> setView("examen");
   const clearBtn = document.getElementById("clear-hist");
   if(clearBtn) clearBtn.onclick = ()=>{
-    if(confirm("¿Borrar todo el historial de simulacros?")){
-      localStorage.removeItem(LS_HISTORY);
+    if(confirm("¿Borrar todo el historial de simulacros? Se borrará también de tu cuenta.")){
+      lsSet(LS_HISTORY(), []);
+      syncProgress();
       renderHistorial();
     }
   };
@@ -907,6 +1000,8 @@ function setupUserUI(){
   if(window.Auth && window.Auth.configured()){
     SESSION = window.Auth.requireAuth();
     if(!SESSION) return; // redirige a login.html
+    // identidad del usuario: aísla su memoria local de la de otros en el mismo equipo
+    USER_KEY = (SESSION.email || "anon").toLowerCase();
     try{
       setupUserUI();
       window.Auth.heartbeat();
@@ -918,14 +1013,25 @@ function setupUserUI(){
     }catch(e){ console.warn("Aviso al iniciar la sesión:", e); }
   }
 
+  // memoria del usuario: primero lo local (instantáneo), luego se fusiona la nube
+  dominadas = new Set(lsGet(LS_DOMINADAS(), []));
+
   $app.innerHTML = `<div class="empty">Cargando banco de preguntas…</div>`;
   await loadData();
   // recuperar examen en curso si existe
-  try{
-    const saved = JSON.parse(localStorage.getItem(LS_EXAM));
-    if(saved && !saved.finished) examState = saved;
-  }catch(e){}
+  const saved = lsGet(LS_EXAM(), null);
+  if(saved && !saved.finished) examState = saved;
   setView("home");
+
+  // traer el progreso guardado en la cuenta (no bloquea el arranque)
+  loadProgressFromCloud().then(()=>{
+    if(view === "historial" || view === "hack") render();
+  }).catch(()=>{});
+
+  // asegura que nada quede sin guardar al cerrar la pestaña
+  window.addEventListener("beforeunload", ()=>{
+    if(window.Auth && typeof window.Auth.flushProgress === "function") window.Auth.flushProgress();
+  });
 })();
 
 })();
