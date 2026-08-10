@@ -105,6 +105,8 @@ function shortMateria(m){
 }
 
 /* ---------------- carga de datos ---------------- */
+let PATRONES = {};   // n → {tags, similitud_max, par_max, resp_mas_larga, regla, fuente}
+let INICIOS = {};    // clave inicio → [n, n, ...] (para "mismo inicio")
 async function loadData(){
   const res = await fetch("data/preguntas.json");
   DATA = await res.json();
@@ -115,6 +117,25 @@ async function loadData(){
     map.get(key).count++;
   });
   MATERIAS = Array.from(map.values()).sort((a,b)=>b.count-a.count);
+  // patrones (silencioso si aún no está desplegado)
+  try{
+    const pr = await fetch("data/patrones.json");
+    if(pr.ok){
+      const p = await pr.json();
+      PATRONES = p.por_pregunta || {};
+    }
+  }catch(e){}
+  // índice de "mismo inicio" (7 primeras palabras normalizadas)
+  const norm = s => (s||"").toUpperCase().replace(/[^A-ZÁÉÍÓÚÑ0-9\s]/g," ")
+    .replace(/[ÁÉÍÓÚ]/g, c => "AEIOU"["ÁÉÍÓÚ".indexOf(c)])
+    .replace(/\s+/g," ").trim();
+  const buckets = {};
+  DATA.forEach(q=>{
+    const k = norm(q.pregunta).split(" ").slice(0,7).join(" ");
+    if(!k) return;
+    (buckets[k] = buckets[k] || []).push(q.n);
+  });
+  Object.entries(buckets).forEach(([k,arr])=>{ if(arr.length>=2) INICIOS[k] = arr.sort((a,b)=>a-b); });
 }
 
 /* ---------------- navegacion ---------------- */
@@ -298,131 +319,235 @@ function renderEstudio(){
   document.getElementById("next-study").onclick = ()=>{ studyState.idx++; studyState.answered=null; renderEstudio(); };
 }
 
-/* ---------------- EL HACK (fichas de memorización: pregunta → respuesta) ----------------
-   Nota: en el examen real las opciones se barajan, así que memorizar letras (A/B/C)
-   no sirve. Lo que sí sirve es memorizar el TEXTO de la respuesta correcta.
-   Este modo muestra cada pregunta con SOLO su respuesta correcta (sin distractores),
-   en orden correlativo y agrupado por materia. */
-let hackGrupo = "todas";      // filtro de grupo
-let hackMateria = "todas";    // materia seleccionada
-let hackHide = false;         // modo auto-evaluación: oculta respuestas hasta revelar
-let hackPendientes = false;   // mostrar solo las que aún no domino
-let hackRevealed = new Set(); // índices revelados en el grupo actual
-function renderHack(){
-  const pool = DATA.filter(q=> hackGrupo==="todas" || q.grupo===hackGrupo);
-  const materias = MATERIAS.filter(m=> hackGrupo==="todas" || m.grupo===hackGrupo);
-  if(hackMateria!=="todas" && !materias.some(m=>m.materia===hackMateria)) hackMateria = "todas";
-  let qs = (hackMateria==="todas" ? pool : pool.filter(q=> q.materia===hackMateria))
-    .slice().sort((a,b)=> (a.n||0)-(b.n||0)); // orden correlativo del banco
-  const totalEnFiltro = qs.length;
-  const dominadasEnFiltro = qs.filter(q=> dominadas.has(q.n)).length;
-  if(hackPendientes) qs = qs.filter(q=> !dominadas.has(q.n));
+/* ---------------- MATRIZ DE PATRONES DE ESTUDIO ----------------
+   Antes se llamaba "El Hack" y agrupaba por letra de respuesta, pero eso no sirve
+   porque en el examen real las opciones se barajan. Esta versión analiza CÓMO
+   está construida cada pregunta: si la respuesta correcta suele ser la más larga,
+   si las opciones son casi idénticas y cambia una palabra bisagra, si hay
+   negación o excepción, si comparte inicio con otras del banco, etc.
+   Fuente: data/patrones.json (manual del usuario para 001-300 + detector automático
+   para 301-1500). */
+
+const PATRON_DEFS = {
+  respuesta_larga_estricta:   { label:"Respuesta más larga",       icon:"star",  desc:"La opción correcta es visiblemente más extensa que las otras. No es regla absoluta, pero es una alerta útil cuando dudas." },
+  respuesta_larga_empate:     { label:"Respuesta larga (empate)",  icon:"star",  desc:"La correcta empata con otra en longitud. Descarta las más cortas y compara palabra por palabra las dos más largas." },
+  opciones_casi_iguales:      { label:"Opciones casi iguales",     icon:"eye",   desc:"Todas las alternativas se parecen y solo cambia una palabra clave (autoridad, plazo, ley, adjetivo). Detecta la palabra bisagra." },
+  negacion_o_excepcion:       { label:"Negación o excepción",      icon:"check", desc:"El enunciado o las opciones contienen 'no', 'salvo', 'excepto', 'nadie', 'se suspende', etc. Léelo dos veces antes de escoger." },
+  marcar_la_incorrecta:       { label:"Marcar la incorrecta",      icon:"trash", desc:"Te piden la INCORRECTA o la que NO corresponde. Es la trampa más común: se falla por leer rápido." },
+  mismo_inicio:               { label:"Mismo inicio (familias)",   icon:"book",  desc:"Comparte inicio con otras preguntas del banco. Estúdialas juntas para aprender qué palabra las diferencia." },
+  respuesta_mas_especifica:   { label:"Respuesta específica",      icon:"chart", desc:"La correcta cita autoridad, plazo, artículo o cifra puntual, mientras las otras son genéricas." },
+  respuesta_literal_normativa:{ label:"Cita literal de la norma",  icon:"book",  desc:"La respuesta correcta reproduce casi textualmente el artículo, inciso o ley. Suele ser la que se ve más 'oficial'." },
+};
+
+let MATRIZ = null;              // data/patrones.json
+let patronGrupo = null;         // grupo activo (P0/G1..G6 o null = ruta general)
+let patronHide = false;         // modo auto-evaluación
+let patronPendientes = false;
+let patronRevealed = new Set();
+
+async function ensureMatriz(){
+  if(MATRIZ) return MATRIZ;
+  try{
+    const r = await fetch("data/patrones.json");
+    if(r.ok) MATRIZ = await r.json();
+  }catch(e){}
+  return MATRIZ;
+}
+
+const PATRON_ICON = { respuesta_larga_estricta:"star", respuesta_larga_empate:"star",
+  opciones_casi_iguales:"eye", negacion_o_excepcion:"check",
+  marcar_la_incorrecta:"trash", mismo_inicio:"book",
+  respuesta_mas_especifica:"chart", respuesta_literal_normativa:"book" };
+
+async function renderHack(){
+  await ensureMatriz();
+  if(!MATRIZ){
+    $app.innerHTML = `<h1>Matriz de patrones</h1>
+      <div class="card"><div class="empty">Cargando el análisis de patrones… si esto persiste, aún no está desplegado el archivo <code>data/patrones.json</code>.</div></div>`;
+    return;
+  }
+  if(!patronGrupo) return renderRutaGeneral();
+  return renderGrupoPatron();
+}
+
+function renderRutaGeneral(){
+  const g = MATRIZ.grupos;
+  const totalPatrones = Object.values(MATRIZ.meta.por_patron||{}).reduce((a,b)=>a+b,0);
+  const dominadasTotal = dominadas.size;
+
+  const grupoCard = (grp)=>{
+    const dif = { "Especial":"dif-esp","Fácil":"dif-baja","Fácil-media":"dif-baja",
+      "Media":"dif-med","Alta":"dif-alta","Muy alta":"dif-muy-alta" }[grp.dificultad] || "";
+    const dom = grp.n.filter(n=> dominadas.has(n)).length;
+    const pct = grp.n.length ? Math.round(dom/grp.n.length*100) : 0;
+    return `
+      <div class="patron-grupo-card" data-g="${grp.id}" role="button" tabindex="0">
+        <div class="pg-head">
+          <span class="pg-id">${grp.id}</span>
+          <span class="pg-dif ${dif}">${escapeHtml(grp.dificultad)}</span>
+        </div>
+        <h3>${escapeHtml(grp.label.replace(/^[·—-]\s*/,''))}</h3>
+        <div class="pg-count">${grp.n.length} preguntas</div>
+        <p class="pg-como">${escapeHtml(grp.como_estudiar)}</p>
+        <div class="pg-progress">
+          <div class="pbar-track"><div class="pbar-fill" style="width:${pct}%"></div></div>
+          <div class="pg-progress-txt">${dom} / ${grp.n.length} dominadas · ${pct}%</div>
+        </div>
+      </div>`;
+  };
 
   $app.innerHTML = `
-    <h1>El Hack <span class="hack-tag">memorización directa</span></h1>
-    <p class="subtitle">Cada pregunta con <b>solo su respuesta correcta</b>, sin distractores, en orden correlativo.
-    En el examen las opciones cambian de letra, así que lo que se memoriza es el <b>texto</b> de la respuesta, no la letra.
-    Actívalo en modo auto-evaluación para taparte las respuestas y comprobarte.</p>
+    <h1>Matriz de patrones <span class="hack-tag">ruta metodológica</span></h1>
+    <p class="subtitle">Las 1500 preguntas del banco no son iguales. Se agruparon en <b>6 categorías + P0</b>
+    según el tipo de razonamiento que exigen (definiciones, autoridad competente, plazos, familias con
+    mismo inicio, opciones gemelas, negativas). No se trata de adivinar, sino de leer con la técnica
+    correcta para cada tipo.</p>
 
-    <div class="section-toggle">
-      <button data-g="todas" class="${hackGrupo==='todas'?'active':''}">Todas (${DATA.length})</button>
-      <button data-g="Materias Comunes" class="${hackGrupo==='Materias Comunes'?'active':''}">Comunes</button>
-      <button data-g="Materias de Especialidad" class="${hackGrupo==='Materias de Especialidad'?'active':''}">Especialidad</button>
+    <div class="patron-summary">
+      <div class="ps-tile"><b>${MATRIZ.meta.total}</b><span>preguntas totales</span></div>
+      <div class="ps-tile"><b>${g.length}</b><span>grupos de estudio</span></div>
+      <div class="ps-tile"><b>${MATRIZ.meta.familias_mismo_inicio}</b><span>familias con mismo inicio</span></div>
+      <div class="ps-tile"><b>${dominadasTotal}</b><span>ya dominadas por ti</span></div>
     </div>
 
-    <div class="filters">
-      <select id="hack-materia" aria-label="Filtrar por materia">
-        <option value="todas">Todas las materias (${pool.length} preguntas)</option>
-        ${materias.map(m=>`<option value="${escapeHtml(m.materia)}" ${m.materia===hackMateria?'selected':''}>${escapeHtml(shortMateria(m.materia))} (${m.count})</option>`).join("")}
-      </select>
+    <h2>Ruta sugerida — estúdialas en este orden</h2>
+    <div class="patron-grupos">${g.map(grupoCard).join("")}</div>
+
+    <div class="card patron-plan">
+      <h2>Plan de vueltas</h2>
+      <ol>
+        <li><b>Vuelta 0 — P0:</b> RD modificadas y ratificadas. Fija la versión oficial.</li>
+        <li><b>Vuelta 1 — G1 + G2:</b> Base fácil: definiciones y autoridades.</li>
+        <li><b>Vuelta 2 — G3:</b> Números, plazos, años y cantidades.</li>
+        <li><b>Vuelta 3 — G4:</b> Familias de inicio repetido.</li>
+        <li><b>Vuelta 4 — G5:</b> Distractores similares y palabra cambiante.</li>
+        <li><b>Vuelta 5 — G6:</b> Negativas, excepciones y lectura inversa.</li>
+        <li><b>Vuelta 6:</b> Simulacros mixtos de 50 a 100 preguntas por sesión.</li>
+      </ol>
     </div>
+  `;
+
+  $app.querySelectorAll(".patron-grupo-card").forEach(el=>{
+    const go = ()=>{ patronGrupo = el.dataset.g; patronRevealed.clear(); renderHack(); window.scrollTo({top:0,behavior:"smooth"}); };
+    el.onclick = go;
+    el.onkeydown = (e)=>{ if(e.key==="Enter"||e.key===" "){ e.preventDefault(); go(); } };
+  });
+}
+
+function renderGrupoPatron(){
+  const grp = MATRIZ.grupos.find(x=> x.id === patronGrupo);
+  if(!grp){ patronGrupo = null; return renderRutaGeneral(); }
+
+  let qs = grp.n.map(n=> byN(n)).filter(Boolean);
+  const total = qs.length;
+  const dom = qs.filter(q=> dominadas.has(q.n)).length;
+  const pct = total ? Math.round(dom/total*100) : 0;
+  if(patronPendientes) qs = qs.filter(q=> !dominadas.has(q.n));
+
+  $app.innerHTML = `
+    <div class="patron-crumb">
+      <a href="#" id="patron-back">← Volver a la ruta</a>
+      <span class="pg-dif ${difClass(grp.dificultad)}">${escapeHtml(grp.dificultad)}</span>
+    </div>
+    <h1>${grp.id} <span style="font-family:var(--font-body);font-size:18px;font-weight:600;color:var(--ink-soft)">· ${escapeHtml(grp.label.replace(/^[·—-]\s*/,''))}</span></h1>
+    <p class="subtitle">${escapeHtml(grp.como_estudiar)}</p>
 
     <div class="hack-progress">
-      <div class="pmeta">
-        <span><b>${dominadasEnFiltro}</b> de ${totalEnFiltro} dominadas</span>
-        <span>${totalEnFiltro ? Math.round(dominadasEnFiltro/totalEnFiltro*100) : 0}%</span>
-      </div>
-      <div class="pbar-track" role="progressbar" aria-valuenow="${dominadasEnFiltro}" aria-valuemin="0" aria-valuemax="${totalEnFiltro}" aria-label="Preguntas dominadas">
-        <div class="pbar-fill" style="width:${totalEnFiltro ? (dominadasEnFiltro/totalEnFiltro*100) : 0}%"></div>
-      </div>
+      <div class="pmeta"><span><b>${dom}</b> de ${total} dominadas</span><span>${pct}%</span></div>
+      <div class="pbar-track" role="progressbar" aria-valuenow="${dom}" aria-valuemin="0" aria-valuemax="${total}"><div class="pbar-fill" style="width:${pct}%"></div></div>
     </div>
 
     <div class="hack-head">
-      <span>${qs.length} pregunta${qs.length===1?'':'s'}${hackMateria!=="todas" ? " · "+escapeHtml(shortMateria(hackMateria)) : ""}</span>
+      <span>${qs.length} pregunta${qs.length===1?'':'s'} ${patronPendientes ? '· solo pendientes' : ''}</span>
       <div class="hack-actions">
-        <button class="mark-btn ${hackPendientes?'marked':''}" id="hack-pend" aria-pressed="${hackPendientes?'true':'false'}">
-          ${svg("star")} ${hackPendientes?'Solo pendientes':'Ver todas'}
+        <button class="mark-btn ${patronPendientes?'marked':''}" id="patron-pend">
+          ${svg("star")} ${patronPendientes?'Solo pendientes':'Ver todas'}
         </button>
-        <button class="mark-btn ${hackHide?'marked':''}" id="hack-mode" aria-pressed="${hackHide?'true':'false'}">
-          ${svg(hackHide?'eye':'check')} ${hackHide?'Auto-evaluación: ON':'Auto-evaluación: OFF'}
+        <button class="mark-btn ${patronHide?'marked':''}" id="patron-mode">
+          ${svg(patronHide?'eye':'check')} ${patronHide?'Auto-evaluación: ON':'Auto-evaluación: OFF'}
         </button>
       </div>
     </div>
-    <div id="hack-list"></div>
+    <div id="patron-list"></div>
   `;
 
-  document.querySelectorAll(".section-toggle button").forEach(b=>{
-    b.onclick = ()=>{ hackGrupo = b.dataset.g; hackMateria = "todas"; hackRevealed.clear(); renderHack(); };
-  });
-  document.getElementById("hack-materia").onchange = (e)=>{
-    hackMateria = e.target.value; hackRevealed.clear(); renderHack(); window.scrollTo({top:0,behavior:"smooth"});
-  };
-  document.getElementById("hack-mode").onclick = ()=>{ hackHide = !hackHide; hackRevealed.clear(); renderHack(); };
-  document.getElementById("hack-pend").onclick = ()=>{ hackPendientes = !hackPendientes; hackRevealed.clear(); renderHack(); };
+  document.getElementById("patron-back").onclick = (e)=>{ e.preventDefault(); patronGrupo=null; renderHack(); };
+  document.getElementById("patron-mode").onclick = ()=>{ patronHide = !patronHide; patronRevealed.clear(); renderHack(); };
+  document.getElementById("patron-pend").onclick = ()=>{ patronPendientes = !patronPendientes; patronRevealed.clear(); renderHack(); };
 
-  const list = document.getElementById("hack-list");
-  // por rendimiento: si son demasiadas, renderiza por bloques con botón "cargar más"
+  const list = document.getElementById("patron-list");
   const PAGE = 200;
   let shownCount = Math.min(PAGE, qs.length);
 
-  function cardHTML(q, n){
-    const shown = !hackHide || hackRevealed.has(n);
+  function tagChips(info){
+    if(!info || !info.tags || !info.tags.length) return "";
+    return `<div class="patron-chips">${info.tags.map(t=>{
+      const def = PATRON_DEFS[t];
+      if(!def) return "";
+      return `<span class="patron-chip" title="${escapeHtml(def.desc)}">${svg(PATRON_ICON[t]||"star")} ${escapeHtml(def.label)}</span>`;
+    }).join("")}</div>`;
+  }
+  function cardHTML(q){
+    const info = (MATRIZ.por_pregunta && MATRIZ.por_pregunta[q.n]) || {tags:[]};
+    const shown = !patronHide || patronRevealed.has(q.n);
     const known = dominadas.has(q.n);
     const answer = shown
       ? `<div class="hack-answer">${svg("check")} <span>${escapeHtml(q.respuesta || q.opciones[q.correcta] || "")}</span></div>
+         ${info.palabras_cambian ? `<div class="patron-hint"><b>Palabra que cambia:</b> ${escapeHtml(info.palabras_cambian)}</div>` : ""}
+         ${info.palabras_clave ? `<div class="patron-hint"><b>Palabras clave:</b> ${escapeHtml(info.palabras_clave)}</div>` : ""}
+         ${info.regla ? `<div class="patron-hint patron-regla">${svg("book")} <span>${escapeHtml(info.regla)}</span></div>` : ""}
          ${q.ubicacion ? `<div class="legal" style="margin-top:6px">Base legal: ${escapeHtml(q.ubicacion)}</div>` : ""}`
-      : `<button class="btn outline hack-reveal" data-n="${n}" style="margin-top:4px">${svg("eye")} Ver respuesta</button>`;
+      : `<button class="btn outline hack-reveal" data-n="${q.n}" style="margin-top:4px">${svg("eye")} Ver respuesta y análisis</button>`;
     return `
       <div class="hack-card${known?' known':''}">
         <div class="hack-q-top">
-          <span class="hack-num">${n+1}</span>
+          <span class="hack-num">${q.n}</span>
           <span class="qmeta">${shortMateria(q.materia)}</span>
-          <button class="mark-btn hack-know ${known?'marked':''}" data-q="${q.n}" aria-pressed="${known?'true':'false'}"
-                  title="${known?'Marcada como dominada':'Marcar como dominada'}">
+          <button class="mark-btn hack-know ${known?'marked':''}" data-q="${q.n}" aria-pressed="${known?'true':'false'}">
             ${svg("check")} ${known?'Ya me la sé':'Marcar'}
           </button>
         </div>
         <div class="qtext" style="font-size:15px">${escapeHtml(q.pregunta)}</div>
+        ${tagChips(info)}
         ${answer}
       </div>`;
   }
   function paint(){
     if(!qs.length){
-      list.innerHTML = `<div class="card"><div class="empty">${hackPendientes
-        ? "¡Felicitaciones! Ya dominas todas las preguntas de este filtro."
-        : "No hay preguntas con este filtro."}</div></div>`;
+      list.innerHTML = `<div class="card"><div class="empty">${patronPendientes
+        ? "¡Excelente! Ya dominas todas las preguntas de este grupo."
+        : "No hay preguntas en este grupo."}</div></div>`;
       return;
     }
-    list.innerHTML = qs.slice(0, shownCount).map((q,n)=> cardHTML(q,n)).join("")
+    list.innerHTML = qs.slice(0, shownCount).map(cardHTML).join("")
       + (shownCount < qs.length
-          ? `<div class="btn-row" style="justify-content:center"><button class="btn" id="hack-more">Cargar ${Math.min(PAGE, qs.length-shownCount)} más (${qs.length-shownCount} restantes)</button></div>`
+          ? `<div class="btn-row" style="justify-content:center"><button class="btn" id="patron-more">Cargar ${Math.min(PAGE, qs.length-shownCount)} más (${qs.length-shownCount} restantes)</button></div>`
           : "");
     list.querySelectorAll(".hack-reveal").forEach(b=>{
-      b.onclick = ()=>{ hackRevealed.add(+b.dataset.n); paint(); };
+      b.onclick = ()=>{ patronRevealed.add(+b.dataset.n); paint(); };
     });
     list.querySelectorAll(".hack-know").forEach(b=>{
       b.onclick = ()=>{
         const qn = Number(b.dataset.q);
         if(dominadas.has(qn)) dominadas.delete(qn); else dominadas.add(qn);
         lsSet(LS_DOMINADAS(), Array.from(dominadas));
-        syncProgress();          // guarda en la cuenta del usuario (diferido)
-        renderHack();            // refresca barra de progreso y filtro
+        syncProgress();
+        renderHack();
       };
     });
-    const more = document.getElementById("hack-more");
+    const more = document.getElementById("patron-more");
     if(more) more.onclick = ()=>{ shownCount = Math.min(shownCount+PAGE, qs.length); paint(); };
   }
   paint();
+}
+
+function byN(n){
+  if(!DATA._byN){ DATA._byN = {}; DATA.forEach(q=> DATA._byN[q.n] = q); }
+  return DATA._byN[n];
+}
+function difClass(d){
+  return { "Especial":"dif-esp","Fácil":"dif-baja","Fácil-media":"dif-baja",
+    "Media":"dif-med","Alta":"dif-alta","Muy alta":"dif-muy-alta" }[d] || "";
 }
 
 /* ---------------- EXAMEN: configuracion ---------------- */
