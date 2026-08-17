@@ -487,6 +487,10 @@ input[type=number],select{
 .patron-crumb a{ font-size:13.5px; font-weight:700; color:var(--green-700); text-decoration:none; }
 .patron-crumb a:hover{ text-decoration:underline; }
 
+/* opciones interactivas en modo auto-evaluación */
+.patron-opts{ display:flex; flex-direction:column; gap:8px; margin-top:8px; }
+.patron-opts .qoption{ margin-bottom:0; padding:11px 14px; }
+
 .patron-chips{ display:flex; flex-wrap:wrap; gap:6px; margin:8px 0 10px; }
 .patron-chip{
   display:inline-flex; align-items:center; gap:5px;

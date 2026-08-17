@@ -341,9 +341,10 @@ const PATRON_DEFS = {
 
 let MATRIZ = null;              // data/patrones.json
 let patronGrupo = null;         // grupo activo (P0/G1..G6 o null = ruta general)
-let patronHide = false;         // modo auto-evaluación
+let patronHide = false;         // modo auto-evaluación (muestra opciones para marcar)
 let patronPendientes = false;
 let patronRevealed = new Set();
+let patronRespuestas = new Map(); // n de pregunta → índice de opción elegida
 
 async function ensureMatriz(){
   if(MATRIZ) return MATRIZ;
@@ -463,8 +464,8 @@ function renderGrupoPatron(){
         <button class="mark-btn ${patronPendientes?'marked':''}" id="patron-pend">
           ${svg("star")} ${patronPendientes?'Solo pendientes':'Ver todas'}
         </button>
-        <button class="mark-btn ${patronHide?'marked':''}" id="patron-mode">
-          ${svg(patronHide?'eye':'check')} ${patronHide?'Auto-evaluación: ON':'Auto-evaluación: OFF'}
+        <button class="mark-btn ${patronHide?'marked':''}" id="patron-mode" title="En modo auto-evaluación aparecen las alternativas para que marques y compruebes tu respuesta">
+          ${svg(patronHide?'eye':'check')} ${patronHide?'Auto-evaluación: ON (marca la opción)':'Modo memorización'}
         </button>
       </div>
     </div>
@@ -472,7 +473,7 @@ function renderGrupoPatron(){
   `;
 
   document.getElementById("patron-back").onclick = (e)=>{ e.preventDefault(); patronGrupo=null; renderHack(); };
-  document.getElementById("patron-mode").onclick = ()=>{ patronHide = !patronHide; patronRevealed.clear(); renderHack(); };
+  document.getElementById("patron-mode").onclick = ()=>{ patronHide = !patronHide; patronRevealed.clear(); patronRespuestas.clear(); renderHack(); };
   document.getElementById("patron-pend").onclick = ()=>{ patronPendientes = !patronPendientes; patronRevealed.clear(); renderHack(); };
 
   const list = document.getElementById("patron-list");
@@ -489,15 +490,42 @@ function renderGrupoPatron(){
   }
   function cardHTML(q){
     const info = (MATRIZ.por_pregunta && MATRIZ.por_pregunta[q.n]) || {tags:[]};
-    const shown = !patronHide || patronRevealed.has(q.n);
     const known = dominadas.has(q.n);
-    const answer = shown
-      ? `<div class="hack-answer">${svg("check")} <span>${escapeHtml(q.respuesta || q.opciones[q.correcta] || "")}</span></div>
-         ${info.palabras_cambian ? `<div class="patron-hint"><b>Palabra que cambia:</b> ${escapeHtml(info.palabras_cambian)}</div>` : ""}
-         ${info.palabras_clave ? `<div class="patron-hint"><b>Palabras clave:</b> ${escapeHtml(info.palabras_clave)}</div>` : ""}
-         ${info.regla ? `<div class="patron-hint patron-regla">${svg("book")} <span>${escapeHtml(info.regla)}</span></div>` : ""}
-         ${q.ubicacion ? `<div class="legal" style="margin-top:6px">Base legal: ${escapeHtml(q.ubicacion)}</div>` : ""}`
-      : `<button class="btn outline hack-reveal" data-n="${q.n}" style="margin-top:4px">${svg("eye")} Ver respuesta y análisis</button>`;
+    const analisis =
+      (info.palabras_cambian ? `<div class="patron-hint"><b>Palabra que cambia:</b> ${escapeHtml(info.palabras_cambian)}</div>` : "") +
+      (info.palabras_clave ? `<div class="patron-hint"><b>Palabras clave:</b> ${escapeHtml(info.palabras_clave)}</div>` : "") +
+      (info.regla ? `<div class="patron-hint patron-regla">${svg("book")} <span>${escapeHtml(info.regla)}</span></div>` : "") +
+      (q.ubicacion ? `<div class="legal" style="margin-top:6px">Base legal: ${escapeHtml(q.ubicacion)}</div>` : "");
+
+    let body;
+    if(!patronHide){
+      // Modo memorización: muestra directamente la respuesta correcta
+      body = `<div class="hack-answer">${svg("check")} <span>${escapeHtml(q.respuesta || q.opciones[q.correcta] || "")}</span></div>${analisis}`;
+    } else {
+      // Modo auto-evaluación: muestra opciones interactivas (barajadas)
+      // Fija el orden de barajado por pregunta para que sea estable al re-render.
+      const seed = q.n;
+      const order = shuffleSeed(q.opciones.map((_,i)=>i), seed);
+      const picked = patronRespuestas.get(q.n);           // índice ORIGINAL elegido
+      const done = picked !== undefined;
+      const acierto = done && picked === q.correcta;
+      const opts = order.map((origIdx, shownPos)=>{
+        let cls = "qoption";
+        if(done){
+          if(origIdx === q.correcta) cls += " correct";
+          else if(origIdx === picked) cls += " incorrect";
+        }
+        return `<div class="${cls}" data-i="${origIdx}" data-q="${q.n}" role="button" tabindex="0"><span class="letter">${"ABCDE"[shownPos]||shownPos+1}</span><span>${escapeHtml(q.opciones[origIdx])}</span></div>`;
+      }).join("");
+      const feedback = done
+        ? `<div class="study-feedback ${acierto?'ok':'bad'}" aria-live="polite">${
+            acierto
+              ? `${svg("check")} ¡Correcto!`
+              : `${svg("trash")} Incorrecto. La respuesta correcta es: ${escapeHtml(q.opciones[q.correcta])}`
+          }</div>${analisis}`
+        : "";
+      body = `<div class="patron-opts">${opts}</div>${feedback}`;
+    }
     return `
       <div class="hack-card${known?' known':''}">
         <div class="hack-q-top">
@@ -509,7 +537,7 @@ function renderGrupoPatron(){
         </div>
         <div class="qtext" style="font-size:15px">${escapeHtml(q.pregunta)}</div>
         ${tagChips(info)}
-        ${answer}
+        ${body}
       </div>`;
   }
   function paint(){
@@ -535,10 +563,33 @@ function renderGrupoPatron(){
         renderHack();
       };
     });
+    // Modo auto-evaluación: clic en opción → marca respuesta
+    list.querySelectorAll(".patron-opts .qoption").forEach(el=>{
+      const pick = ()=>{
+        const qn = Number(el.dataset.q);
+        if(patronRespuestas.has(qn)) return; // ya respondió; no permite cambiar
+        patronRespuestas.set(qn, Number(el.dataset.i));
+        paint();
+      };
+      el.onclick = pick;
+      el.onkeydown = (e)=>{ if(e.key==="Enter"||e.key===" "){ e.preventDefault(); pick(); } };
+    });
     const more = document.getElementById("patron-more");
     if(more) more.onclick = ()=>{ shownCount = Math.min(shownCount+PAGE, qs.length); paint(); };
   }
   paint();
+}
+
+// Baraja determinista: mismo seed → mismo orden. Evita que el orden cambie en cada render.
+function shuffleSeed(arr, seed){
+  const a = arr.slice();
+  let s = seed | 0;
+  for(let i = a.length-1; i > 0; i--){
+    s = (s * 9301 + 49297) % 233280;
+    const j = Math.floor(s / 233280 * (i+1));
+    [a[i], a[j]] = [a[j], a[i]];
+  }
+  return a;
 }
 
 function byN(n){
