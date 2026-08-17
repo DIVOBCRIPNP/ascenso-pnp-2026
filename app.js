@@ -342,7 +342,8 @@ const PATRON_DEFS = {
 let MATRIZ = null;              // data/patrones.json
 let patronGrupo = null;         // grupo activo (P0/G1..G6 o null = ruta general)
 let patronFamilia = null;       // familia activa (id) o null
-let patronVista = "ruta";       // 'ruta' | 'familias'
+let patronSyn = null;           // "grupo sintético" (RR o AN) activo o null
+let patronVista = "ruta";       // 'ruta' | 'familias' | 'rr' | 'articulos'
 let patronHide = false;         // modo auto-evaluación (muestra opciones para marcar)
 let patronPendientes = false;
 let patronRevealed = new Set();
@@ -370,6 +371,7 @@ async function renderHack(){
       <div class="card"><div class="empty">Cargando el análisis de patrones… si esto persiste, aún no está desplegado el archivo <code>data/patrones.json</code>.</div></div>`;
     return;
   }
+  if(patronSyn)     return renderGrupoPatron(patronSyn);
   if(patronFamilia) return renderFamiliaPatron();
   if(patronGrupo)   return renderGrupoPatron();
   return renderRutaGeneral();
@@ -431,15 +433,17 @@ function renderRutaGeneral(){
     </div>
 
     <div class="section-toggle" role="tablist">
-      <button data-vista="ruta" class="${patronVista==='ruta'?'active':''}" role="tab">Ruta metodológica (P0–G6)</button>
+      <button data-vista="ruta" class="${patronVista==='ruta'?'active':''}" role="tab">Ruta (P0–G6)</button>
       <button data-vista="familias" class="${patronVista==='familias'?'active':''}" role="tab">Familias temáticas (${familias.length})</button>
+      <button data-vista="rr" class="${patronVista==='rr'?'active':''}" role="tab">Familias RR (${(MATRIZ.motor?.indices?.RR_groups||[]).length})</button>
+      <button data-vista="articulos" class="${patronVista==='articulos'?'active':''}" role="tab">Artículos ancla (${Object.keys(MATRIZ.motor?.indices?.AN_index||{}).length})</button>
     </div>
 
-    ${patronVista==='familias'
-      ? `<div class="patron-grupos">${familias.map(familiaCard).join("")}</div>`
-      : `<h2>Ruta sugerida — estúdialas en este orden</h2>
-         <div class="patron-grupos">${g.map(grupoCard).join("")}</div>`
-    }
+    ${patronVista==='familias' ? `<div class="patron-grupos">${familias.map(familiaCard).join("")}</div>` : ""}
+    ${patronVista==='rr'       ? renderRRList() : ""}
+    ${patronVista==='articulos'? renderANList() : ""}
+    ${patronVista==='ruta'     ? `<h2>Ruta sugerida — estúdialas en este orden</h2>
+         <div class="patron-grupos">${g.map(grupoCard).join("")}</div>` : ""}
 
     <div class="card patron-plan">
       <h2>Plan de vueltas</h2>
@@ -460,8 +464,38 @@ function renderRutaGeneral(){
   });
   $app.querySelectorAll(".patron-grupo-card").forEach(el=>{
     const go = ()=>{
-      if(el.dataset.g){ patronGrupo = el.dataset.g; patronFamilia = null; }
-      else if(el.dataset.fam){ patronFamilia = el.dataset.fam; patronGrupo = null; }
+      if(el.dataset.g){ patronGrupo = el.dataset.g; patronFamilia = null; patronSyn = null; }
+      else if(el.dataset.fam){ patronFamilia = el.dataset.fam; patronGrupo = null; patronSyn = null; }
+      patronRevealed.clear();
+      renderHack();
+      window.scrollTo({top:0, behavior:"smooth"});
+    };
+    el.onclick = go;
+    el.onkeydown = (e)=>{ if(e.key==="Enter"||e.key===" "){ e.preventDefault(); go(); } };
+  });
+  // Familias RR (respuesta repetida)
+  $app.querySelectorAll(".rr-card[data-rrresp]").forEach(el=>{
+    const go = ()=>{
+      const resp = el.dataset.rrresp;
+      const g = (MATRIZ.motor?.indices?.RR_groups||[]).find(x=> x.respuesta === resp);
+      if(!g) return;
+      patronSyn = { id:"RR:"+resp.slice(0,40), label:"Respuesta repetida (RR)", dificultad:"MEDIA", como_estudiar:`Todas comparten: "${resp}"`, n:g.ns };
+      patronGrupo = null; patronFamilia = null;
+      patronRevealed.clear();
+      renderHack();
+      window.scrollTo({top:0, behavior:"smooth"});
+    };
+    el.onclick = go;
+    el.onkeydown = (e)=>{ if(e.key==="Enter"||e.key===" "){ e.preventDefault(); go(); } };
+  });
+  // Artículos ancla (AN)
+  $app.querySelectorAll(".rr-card[data-anart]").forEach(el=>{
+    const go = ()=>{
+      const art = el.dataset.anart;
+      const ns = (MATRIZ.motor?.indices?.AN_index||{})[art];
+      if(!ns) return;
+      patronSyn = { id:"AN:"+art, label:`Artículo ancla (AN) · Art. ${art}`, dificultad:"MEDIA", como_estudiar:"Todas se apoyan en el mismo artículo. Estúdialo una vez, resuelve todas.", n:ns };
+      patronGrupo = null; patronFamilia = null;
       patronRevealed.clear();
       renderHack();
       window.scrollTo({top:0, behavior:"smooth"});
@@ -517,7 +551,7 @@ function renderGrupoPatron(grpParam){
     <div id="patron-list"></div>
   `;
 
-  document.getElementById("patron-back").onclick = (e)=>{ e.preventDefault(); patronGrupo=null; patronFamilia=null; renderHack(); };
+  document.getElementById("patron-back").onclick = (e)=>{ e.preventDefault(); patronGrupo=null; patronFamilia=null; patronSyn=null; renderHack(); };
   document.getElementById("patron-mode").onclick = ()=>{ patronHide = !patronHide; patronRevealed.clear(); patronRespuestas.clear(); renderHack(); };
   document.getElementById("patron-pend").onclick = ()=>{ patronPendientes = !patronPendientes; patronRevealed.clear(); renderHack(); };
 
@@ -538,13 +572,26 @@ function renderGrupoPatron(grpParam){
     const known = dominadas.has(q.n);
     const palabras = info.palabras_cambian || [];
 
-    // Chips: familia + subfamilia + tipos de coincidencia
+    // Chips: familia + subfamilia + tipos de coincidencia + señales del motor
     let chips = "";
     if(info.familia)     chips += `<span class="patron-chip fam" title="Familia temática">${svg("book")} ${escapeHtml(info.familia)}</span>`;
     if(info.subfamilia && info.subfamilia !== info.familia)
                           chips += `<span class="patron-chip subfam">${escapeHtml(info.subfamilia)}</span>`;
     if(info.dificultad)  chips += `<span class="patron-chip dif ${difClass(info.dificultad)}">${escapeHtml(info.dificultad)}</span>`;
     (info.tipos||[]).forEach(t => chips += `<span class="patron-chip">${escapeHtml(t)}</span>`);
+
+    // Chips del MOTOR (algoritmo): confianza + artículo ancla + verbo + autoridad + plazo + frase canónica
+    const motor = info.motor || {};
+    if(motor.confianza){
+      const cc = { "MUY ALTA":"mvalta", "ALTA":"alta", "MEDIA":"med", "BAJA":"baja" }[motor.confianza] || "";
+      chips += `<span class="patron-chip conf ${cc}" title="Confianza del motor de patrones">🎯 ${escapeHtml(motor.confianza)}</span>`;
+    }
+    if(motor.articulo_ancla) chips += `<span class="patron-chip an" title="Artículo ancla">📖 Art. ${escapeHtml(motor.articulo_ancla)}</span>`;
+    if(motor.verbo_rector)   chips += `<span class="patron-chip vr" title="Verbo rector">⚡ ${escapeHtml(motor.verbo_rector)}</span>`;
+    (motor.autoridades||[]).forEach(a=> chips += `<span class="patron-chip ac" title="Autoridad competente">👤 ${escapeHtml(a)}</span>`);
+    (motor.plazos||[]).forEach(p=> chips += `<span class="patron-chip np" title="Plazo o cantidad">⏱ ${escapeHtml(p)}</span>`);
+    (motor.categoria_juridica||[]).forEach(c=> chips += `<span class="patron-chip cj" title="Categoría jurídica">§ ${escapeHtml(c)}</span>`);
+    (motor.frases_canonicas||[]).forEach(f=> chips += `<span class="patron-chip fc" title="Frase canónica">📜 ${escapeHtml(f)}</span>`);
 
     // Panel "análisis" (memorización + palabras + relacionadas)
     const memo = info.observacion
@@ -556,11 +603,28 @@ function renderGrupoPatron(grpParam){
     const kws  = palabras.length
       ? `<div class="patron-hint"><b>Palabras que cambian:</b> ${palabras.map(p=>`<span class="kw-chip">${escapeHtml(p)}</span>`).join(" ")}</div>`
       : "";
-    const rels = (info.relacionadas && info.relacionadas.length)
-      ? `<div class="patron-hint patron-rel"><b>${svg("chart")} Relacionadas (misma respuesta):</b> ${info.relacionadas.slice(0,15).map(n=>`<a href="#" class="rel-link" data-rel="${n}">#${n}</a>`).join(", ")}${info.relacionadas.length>15?` <span class="ink-soft">y ${info.relacionadas.length-15} más</span>`:""}</div>`
+    // Hermanas RR del motor si el usuario no lo trae (más completo que el ranking XLSX)
+    const relas = (info.relacionadas && info.relacionadas.length) ? info.relacionadas
+                 : (motor.familia_rr_hermanas || []);
+    const rels = relas.length
+      ? `<div class="patron-hint patron-rel"><b>${svg("chart")} Relacionadas (misma respuesta):</b> ${relas.slice(0,15).map(n=>`<a href="#" class="rel-link" data-rel="${n}">#${n}</a>`).join(", ")}${relas.length>15?` <span class="ink-soft">y ${relas.length-15} más</span>`:""}</div>`
+      : "";
+    // Preguntas espejo (tronco común, pero respuesta distinta)
+    const espejos = (motor.espejo_hermanas||[]);
+    const relsPE = espejos.length
+      ? `<div class="patron-hint patron-rel"><b>🪞 Preguntas espejo (mismo inicio, otra respuesta):</b> ${espejos.slice(0,10).map(n=>`<a href="#" class="rel-link" data-rel="${n}">#${n}</a>`).join(", ")}</div>`
+      : "";
+    // Distractores recurrentes
+    const drs = (motor.distractores_recurrentes||[]);
+    const relsDR = drs.length
+      ? `<div class="patron-hint"><b>⚠ Distractores frecuentes en esta respuesta:</b> ${drs.map(d=>`<span class="kw-chip" style="background:#fbe9e6;border-color:#e0a5a0;color:#7a2a25">${escapeHtml(d.slice(0,40))}${d.length>40?'…':''}</span>`).join(" ")}</div>`
+      : "";
+    // Técnica del motor
+    const tecMotor = motor.tecnica
+      ? `<div class="patron-hint patron-regla">${svg("book")} <span><b>Técnica del motor:</b> ${escapeHtml(motor.tecnica)}</span></div>`
       : "";
     const legal = q.ubicacion ? `<div class="legal" style="margin-top:6px">Base legal: ${escapeHtml(q.ubicacion)}</div>` : "";
-    const analisis = memo + tec + kws + rels + legal;
+    const analisis = memo + tec + tecMotor + kws + rels + relsPE + relsDR + legal;
 
     let body;
     if(!patronHide){
@@ -729,6 +793,47 @@ function shuffleSeed(arr, seed){
     [a[i], a[j]] = [a[j], a[i]];
   }
   return a;
+}
+
+// Renderiza el listado de familias RR (respuestas repetidas): agrupaciones grandes
+// donde varias preguntas comparten exactamente la respuesta oficial.
+function renderRRList(){
+  const groups = (MATRIZ.motor?.indices?.RR_groups || []).filter(g => g.cantidad >= 2);
+  if(!groups.length) return `<div class="card"><div class="empty">Sin familias RR.</div></div>`;
+  return `
+    <p class="subtitle" style="margin-bottom:14px">Preguntas del banco que comparten <b>exactamente</b> la misma respuesta oficial.
+    Estudia el grupo entero: es UNA sola cosa que memorizar para múltiples preguntas.</p>
+    <div class="rr-list">
+      ${groups.map((g,i)=> `
+        <div class="rr-card" data-rrresp="${escapeHtml(g.respuesta)}" role="button" tabindex="0">
+          <div class="rr-head">
+            <span class="rr-badge">×${g.cantidad}</span>
+            <span class="rr-resp">${escapeHtml(g.respuesta)}</span>
+          </div>
+          <div class="rr-ns">${g.ns.slice(0,20).map(n=>`#${n}`).join(", ")}${g.ns.length>20?` <span class="ink-soft">y ${g.ns.length-20} más</span>`:""}</div>
+        </div>`).join("")}
+    </div>`;
+}
+
+// Renderiza el listado de artículos ancla (AN): artículos normativos donde
+// se apoyan múltiples preguntas del banco.
+function renderANList(){
+  const idx = MATRIZ.motor?.indices?.AN_index || {};
+  const entries = Object.entries(idx).sort((a,b)=> b[1].length - a[1].length);
+  if(!entries.length) return `<div class="card"><div class="empty">Sin artículos ancla.</div></div>`;
+  return `
+    <p class="subtitle" style="margin-bottom:14px">Artículos normativos con <b>2 o más preguntas</b> del banco apoyadas en ellos.
+    Estudia el artículo una vez y desbloqueas todas sus preguntas.</p>
+    <div class="rr-list">
+      ${entries.map(([art, ns])=> `
+        <div class="rr-card" data-anart="${escapeHtml(art)}" role="button" tabindex="0">
+          <div class="rr-head">
+            <span class="rr-badge">×${ns.length}</span>
+            <span class="rr-resp">Art. ${escapeHtml(art)}</span>
+          </div>
+          <div class="rr-ns">${ns.slice(0,20).map(n=>`#${n}`).join(", ")}${ns.length>20?` <span class="ink-soft">y ${ns.length-20} más</span>`:""}</div>
+        </div>`).join("")}
+    </div>`;
 }
 
 function byN(n){
