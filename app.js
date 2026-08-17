@@ -341,6 +341,8 @@ const PATRON_DEFS = {
 
 let MATRIZ = null;              // data/patrones.json
 let patronGrupo = null;         // grupo activo (P0/G1..G6 o null = ruta general)
+let patronFamilia = null;       // familia activa (id) o null
+let patronVista = "ruta";       // 'ruta' | 'familias'
 let patronHide = false;         // modo auto-evaluación (muestra opciones para marcar)
 let patronPendientes = false;
 let patronRevealed = new Set();
@@ -349,7 +351,8 @@ let patronRespuestas = new Map(); // n de pregunta → índice de opción elegid
 async function ensureMatriz(){
   if(MATRIZ) return MATRIZ;
   try{
-    const r = await fetch("data/patrones.json");
+    // no-store: la matriz cambia con cada actualización del banco, no queremos versión vieja
+    const r = await fetch("data/patrones.json", { cache: "no-store" });
     if(r.ok) MATRIZ = await r.json();
   }catch(e){}
   return MATRIZ;
@@ -367,8 +370,9 @@ async function renderHack(){
       <div class="card"><div class="empty">Cargando el análisis de patrones… si esto persiste, aún no está desplegado el archivo <code>data/patrones.json</code>.</div></div>`;
     return;
   }
-  if(!patronGrupo) return renderRutaGeneral();
-  return renderGrupoPatron();
+  if(patronFamilia) return renderFamiliaPatron();
+  if(patronGrupo)   return renderGrupoPatron();
+  return renderRutaGeneral();
 }
 
 function renderRutaGeneral(){
@@ -397,22 +401,45 @@ function renderRutaGeneral(){
       </div>`;
   };
 
+  const familias = MATRIZ.familias || [];
+  const familiaCard = (f)=>{
+    const dom = f.ns.filter(n=> dominadas.has(n)).length;
+    const pct = f.ns.length ? Math.round(dom/f.ns.length*100) : 0;
+    return `
+      <div class="patron-grupo-card" data-fam="${escapeHtml(f.id)}" role="button" tabindex="0">
+        <div class="pg-head"><span class="pg-id small">${f.cantidad}</span></div>
+        <h3>${escapeHtml(f.label)}</h3>
+        <p class="pg-como">${escapeHtml(f.como_estudiar)}</p>
+        <div class="pg-progress">
+          <div class="pbar-track"><div class="pbar-fill" style="width:${pct}%"></div></div>
+          <div class="pg-progress-txt">${dom} / ${f.ns.length} dominadas · ${pct}%</div>
+        </div>
+      </div>`;
+  };
+
   $app.innerHTML = `
     <h1>Matriz de patrones <span class="hack-tag">ruta metodológica</span></h1>
-    <p class="subtitle">Las 1500 preguntas del banco no son iguales. Se agruparon en <b>6 categorías + P0</b>
-    según el tipo de razonamiento que exigen (definiciones, autoridad competente, plazos, familias con
-    mismo inicio, opciones gemelas, negativas). No se trata de adivinar, sino de leer con la técnica
-    correcta para cada tipo.</p>
+    <p class="subtitle">Las 1500 preguntas del banco no son iguales. Se clasificaron por
+    <b>razonamiento</b> (7 grupos) y por <b>familia temática</b> (${familias.length} bloques). Elige la
+    ruta que prefieras. No se trata de adivinar, sino de leer con la técnica correcta para cada tipo.</p>
 
     <div class="patron-summary">
       <div class="ps-tile"><b>${MATRIZ.meta.total}</b><span>preguntas totales</span></div>
-      <div class="ps-tile"><b>${g.length}</b><span>grupos de estudio</span></div>
-      <div class="ps-tile"><b>${MATRIZ.meta.familias_mismo_inicio}</b><span>familias con mismo inicio</span></div>
+      <div class="ps-tile"><b>${g.length}</b><span>grupos de razonamiento</span></div>
+      <div class="ps-tile"><b>${familias.length}</b><span>familias temáticas</span></div>
       <div class="ps-tile"><b>${dominadasTotal}</b><span>ya dominadas por ti</span></div>
     </div>
 
-    <h2>Ruta sugerida — estúdialas en este orden</h2>
-    <div class="patron-grupos">${g.map(grupoCard).join("")}</div>
+    <div class="section-toggle" role="tablist">
+      <button data-vista="ruta" class="${patronVista==='ruta'?'active':''}" role="tab">Ruta metodológica (P0–G6)</button>
+      <button data-vista="familias" class="${patronVista==='familias'?'active':''}" role="tab">Familias temáticas (${familias.length})</button>
+    </div>
+
+    ${patronVista==='familias'
+      ? `<div class="patron-grupos">${familias.map(familiaCard).join("")}</div>`
+      : `<h2>Ruta sugerida — estúdialas en este orden</h2>
+         <div class="patron-grupos">${g.map(grupoCard).join("")}</div>`
+    }
 
     <div class="card patron-plan">
       <h2>Plan de vueltas</h2>
@@ -428,15 +455,33 @@ function renderRutaGeneral(){
     </div>
   `;
 
+  $app.querySelectorAll('.section-toggle button[data-vista]').forEach(b=>{
+    b.onclick = ()=>{ patronVista = b.dataset.vista; renderHack(); };
+  });
   $app.querySelectorAll(".patron-grupo-card").forEach(el=>{
-    const go = ()=>{ patronGrupo = el.dataset.g; patronRevealed.clear(); renderHack(); window.scrollTo({top:0,behavior:"smooth"}); };
+    const go = ()=>{
+      if(el.dataset.g){ patronGrupo = el.dataset.g; patronFamilia = null; }
+      else if(el.dataset.fam){ patronFamilia = el.dataset.fam; patronGrupo = null; }
+      patronRevealed.clear();
+      renderHack();
+      window.scrollTo({top:0, behavior:"smooth"});
+    };
     el.onclick = go;
     el.onkeydown = (e)=>{ if(e.key==="Enter"||e.key===" "){ e.preventDefault(); go(); } };
   });
 }
 
-function renderGrupoPatron(){
-  const grp = MATRIZ.grupos.find(x=> x.id === patronGrupo);
+// Vista de una familia temática: reutiliza renderGrupoPatron con un "grupo sintético".
+function renderFamiliaPatron(){
+  const f = (MATRIZ.familias || []).find(x => x.id === patronFamilia);
+  if(!f){ patronFamilia = null; return renderRutaGeneral(); }
+  // Adaptador: creamos un "grupo" con la forma que espera renderGrupoPatron
+  const fake = { id: patronFamilia, label: f.label, dificultad: "", como_estudiar: f.como_estudiar, n: f.ns };
+  return renderGrupoPatron(fake);
+}
+
+function renderGrupoPatron(grpParam){
+  const grp = grpParam || MATRIZ.grupos.find(x=> x.id === patronGrupo);
   if(!grp){ patronGrupo = null; return renderRutaGeneral(); }
 
   let qs = grp.n.map(n=> byN(n)).filter(Boolean);
@@ -472,7 +517,7 @@ function renderGrupoPatron(){
     <div id="patron-list"></div>
   `;
 
-  document.getElementById("patron-back").onclick = (e)=>{ e.preventDefault(); patronGrupo=null; renderHack(); };
+  document.getElementById("patron-back").onclick = (e)=>{ e.preventDefault(); patronGrupo=null; patronFamilia=null; renderHack(); };
   document.getElementById("patron-mode").onclick = ()=>{ patronHide = !patronHide; patronRevealed.clear(); patronRespuestas.clear(); renderHack(); };
   document.getElementById("patron-pend").onclick = ()=>{ patronPendientes = !patronPendientes; patronRevealed.clear(); renderHack(); };
 
@@ -489,13 +534,33 @@ function renderGrupoPatron(){
     }).join("")}</div>`;
   }
   function cardHTML(q){
-    const info = (MATRIZ.por_pregunta && MATRIZ.por_pregunta[q.n]) || {tags:[]};
+    const info = (MATRIZ.por_pregunta && MATRIZ.por_pregunta[q.n]) || {};
     const known = dominadas.has(q.n);
-    const analisis =
-      (info.palabras_cambian ? `<div class="patron-hint"><b>Palabra que cambia:</b> ${escapeHtml(info.palabras_cambian)}</div>` : "") +
-      (info.palabras_clave ? `<div class="patron-hint"><b>Palabras clave:</b> ${escapeHtml(info.palabras_clave)}</div>` : "") +
-      (info.regla ? `<div class="patron-hint patron-regla">${svg("book")} <span>${escapeHtml(info.regla)}</span></div>` : "") +
-      (q.ubicacion ? `<div class="legal" style="margin-top:6px">Base legal: ${escapeHtml(q.ubicacion)}</div>` : "");
+    const palabras = info.palabras_cambian || [];
+
+    // Chips: familia + subfamilia + tipos de coincidencia
+    let chips = "";
+    if(info.familia)     chips += `<span class="patron-chip fam" title="Familia temática">${svg("book")} ${escapeHtml(info.familia)}</span>`;
+    if(info.subfamilia && info.subfamilia !== info.familia)
+                          chips += `<span class="patron-chip subfam">${escapeHtml(info.subfamilia)}</span>`;
+    if(info.dificultad)  chips += `<span class="patron-chip dif ${difClass(info.dificultad)}">${escapeHtml(info.dificultad)}</span>`;
+    (info.tipos||[]).forEach(t => chips += `<span class="patron-chip">${escapeHtml(t)}</span>`);
+
+    // Panel "análisis" (memorización + palabras + relacionadas)
+    const memo = info.observacion
+      ? `<div class="patron-hint patron-memo">${svg("star")} <span><b>Para memorizar:</b> ${escapeHtml(info.observacion)}</span></div>`
+      : "";
+    const tec  = info.tecnica
+      ? `<div class="patron-hint patron-regla">${svg("book")} <span><b>Técnica:</b> ${escapeHtml(info.tecnica)}</span></div>`
+      : "";
+    const kws  = palabras.length
+      ? `<div class="patron-hint"><b>Palabras que cambian:</b> ${palabras.map(p=>`<span class="kw-chip">${escapeHtml(p)}</span>`).join(" ")}</div>`
+      : "";
+    const rels = (info.relacionadas && info.relacionadas.length)
+      ? `<div class="patron-hint patron-rel"><b>${svg("chart")} Relacionadas (misma respuesta):</b> ${info.relacionadas.slice(0,15).map(n=>`<a href="#" class="rel-link" data-rel="${n}">#${n}</a>`).join(", ")}${info.relacionadas.length>15?` <span class="ink-soft">y ${info.relacionadas.length-15} más</span>`:""}</div>`
+      : "";
+    const legal = q.ubicacion ? `<div class="legal" style="margin-top:6px">Base legal: ${escapeHtml(q.ubicacion)}</div>` : "";
+    const analisis = memo + tec + kws + rels + legal;
 
     let body;
     if(!patronHide){
@@ -503,10 +568,9 @@ function renderGrupoPatron(){
       body = `<div class="hack-answer">${svg("check")} <span>${escapeHtml(q.respuesta || q.opciones[q.correcta] || "")}</span></div>${analisis}`;
     } else {
       // Modo auto-evaluación: muestra opciones interactivas (barajadas)
-      // Fija el orden de barajado por pregunta para que sea estable al re-render.
       const seed = q.n;
       const order = shuffleSeed(q.opciones.map((_,i)=>i), seed);
-      const picked = patronRespuestas.get(q.n);           // índice ORIGINAL elegido
+      const picked = patronRespuestas.get(q.n);
       const done = picked !== undefined;
       const acierto = done && picked === q.correcta;
       const opts = order.map((origIdx, shownPos)=>{
@@ -515,13 +579,15 @@ function renderGrupoPatron(){
           if(origIdx === q.correcta) cls += " correct";
           else if(origIdx === picked) cls += " incorrect";
         }
-        return `<div class="${cls}" data-i="${origIdx}" data-q="${q.n}" role="button" tabindex="0"><span class="letter">${"ABCDE"[shownPos]||shownPos+1}</span><span>${escapeHtml(q.opciones[origIdx])}</span></div>`;
+        // ¡AQUÍ resaltamos las palabras cambiantes en cada alternativa!
+        const html = escapeAndHighlight(q.opciones[origIdx], palabras);
+        return `<div class="${cls}" data-i="${origIdx}" data-q="${q.n}" role="button" tabindex="0"><span class="letter">${"ABCDE"[shownPos]||shownPos+1}</span><span>${html}</span></div>`;
       }).join("");
       const feedback = done
         ? `<div class="study-feedback ${acierto?'ok':'bad'}" aria-live="polite">${
             acierto
               ? `${svg("check")} ¡Correcto!`
-              : `${svg("trash")} Incorrecto. La respuesta correcta es: ${escapeHtml(q.opciones[q.correcta])}`
+              : `${svg("trash")} Incorrecto. La respuesta correcta es: ${escapeAndHighlight(q.opciones[q.correcta], palabras)}`
           }</div>${analisis}`
         : "";
       body = `<div class="patron-opts">${opts}</div>${feedback}`;
@@ -536,7 +602,7 @@ function renderGrupoPatron(){
           </button>
         </div>
         <div class="qtext" style="font-size:15px">${escapeHtml(q.pregunta)}</div>
-        ${tagChips(info)}
+        ${chips ? `<div class="patron-chips">${chips}</div>` : ""}
         ${body}
       </div>`;
   }
@@ -574,10 +640,83 @@ function renderGrupoPatron(){
       el.onclick = pick;
       el.onkeydown = (e)=>{ if(e.key==="Enter"||e.key===" "){ e.preventDefault(); pick(); } };
     });
+    // Clic en enlaces "preguntas relacionadas" → scrollea a la tarjeta si está a la vista,
+    // sino la revela cargando más páginas.
+    list.querySelectorAll(".rel-link").forEach(a=>{
+      a.onclick = (e)=>{
+        e.preventDefault();
+        const nRel = Number(a.dataset.rel);
+        // ¿está en el grupo actual? scrollea; si no, va al banco vía shortcut
+        const target = list.querySelector(`.hack-card .hack-num`);
+        let found = null;
+        list.querySelectorAll(".hack-card").forEach(c=>{
+          if(Number(c.querySelector(".hack-num").textContent) === nRel) found = c;
+        });
+        if(!found){
+          // avanza páginas hasta encontrarla
+          const posInQs = qs.findIndex(q => q.n === nRel);
+          if(posInQs === -1){
+            alert(`La pregunta #${nRel} está en otro grupo temático.`);
+            return;
+          }
+          while(shownCount <= posInQs){ shownCount = Math.min(shownCount+PAGE, qs.length); }
+          paint();
+          setTimeout(()=>{
+            const el = [...list.querySelectorAll(".hack-card")].find(c => Number(c.querySelector(".hack-num").textContent) === nRel);
+            if(el){ el.scrollIntoView({behavior:"smooth", block:"center"}); el.classList.add("flash"); setTimeout(()=>el.classList.remove("flash"), 1500); }
+          }, 60);
+        } else {
+          found.scrollIntoView({behavior:"smooth", block:"center"});
+          found.classList.add("flash"); setTimeout(()=>found.classList.remove("flash"), 1500);
+        }
+      };
+    });
     const more = document.getElementById("patron-more");
     if(more) more.onclick = ()=>{ shownCount = Math.min(shownCount+PAGE, qs.length); paint(); };
   }
   paint();
+}
+
+// Normaliza a UPPER sin acentos (para comparar palabras clave contra opciones).
+function normUp(s){
+  return (s||"").toString().toUpperCase()
+    .normalize("NFD").replace(/[̀-ͯ]/g,"")
+    .replace(/\s+/g," ");
+}
+// Escapa HTML seguro. Escapa primero el texto y luego resalta las palabras clave
+// operando sobre la versión ESCAPADA (segura por construcción, sin XSS).
+function escapeAndHighlight(text, palabras){
+  const esc = escapeHtml(text || "");
+  if(!palabras || !palabras.length) return esc;
+  // hace un mapa entre offsets escapados y offsets del texto normalizado (upper/sin acentos)
+  const upEsc = normUp(esc);
+  const marks = [];
+  palabras.forEach(w => {
+    const kw = normUp(w).trim();
+    if(kw.length < 3) return;
+    // escapa metacaracteres regex
+    const re = new RegExp("\\b" + kw.replace(/[.*+?^${}()|[\]\\]/g,"\\$&") + "\\b", "g");
+    let m;
+    while((m = re.exec(upEsc)) !== null){
+      marks.push([m.index, m.index + m[0].length]);
+    }
+  });
+  if(!marks.length) return esc;
+  // fusiona rangos solapados
+  marks.sort((a,b)=> a[0]-b[0]);
+  const merged = [];
+  for(const [s,e] of marks){
+    if(merged.length && s <= merged[merged.length-1][1]) merged[merged.length-1][1] = Math.max(e, merged[merged.length-1][1]);
+    else merged.push([s,e]);
+  }
+  // reconstruye
+  let out = "", cur = 0;
+  for(const [s,e] of merged){
+    out += esc.slice(cur, s) + '<mark class="kw">' + esc.slice(s, e) + '</mark>';
+    cur = e;
+  }
+  out += esc.slice(cur);
+  return out;
 }
 
 // Baraja determinista: mismo seed → mismo orden. Evita que el orden cambie en cada render.

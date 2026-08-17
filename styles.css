@@ -491,7 +491,52 @@ input[type=number],select{
 .patron-opts{ display:flex; flex-direction:column; gap:8px; margin-top:8px; }
 .patron-opts .qoption{ margin-bottom:0; padding:11px 14px; }
 
+/* resaltado de palabras que cambian dentro de las opciones */
+mark.kw{
+  background:linear-gradient(180deg, transparent 55%, rgba(201,164,76,0.55) 55%);
+  color:inherit; padding:0 2px; border-radius:3px; font-weight:700;
+}
+.qoption.correct mark.kw{ background:linear-gradient(180deg, transparent 55%, rgba(46,125,79,0.35) 55%); }
+.qoption.incorrect mark.kw{ background:linear-gradient(180deg, transparent 55%, rgba(179,57,44,0.30) 55%); }
+
+/* chips de tipos de coincidencia / familia */
 .patron-chips{ display:flex; flex-wrap:wrap; gap:6px; margin:8px 0 10px; }
+.patron-chip.fam{ background:#eef4ee; color:var(--green-700); border-color:#c8dccd; }
+.patron-chip.subfam{ background:#f6f0e2; color:#7a5e1a; border-color:#e8d9a9; }
+.patron-chip.dif.dif-baja{ background:#e3f0e8; color:var(--green-ok); border-color:#bfd9c7; }
+.patron-chip.dif.dif-med{ background:#fdf6e6; color:#8a6a23; border-color:#eddba9; }
+.patron-chip.dif.dif-alta{ background:#fbe9df; color:#a35226; border-color:#f0c9b1; }
+.patron-chip.dif.dif-muy-alta{ background:var(--red-bg); color:var(--red); border-color:#f0b9b1; }
+.patron-chip.dif.dif-esp{ background:#eae0f5; color:#5a3a8a; border-color:#cebde3; }
+
+/* bloques memorizar / relacionadas / palabras clave */
+.patron-hint .kw-chip{
+  display:inline-block; background:#fff5d3; border:1px solid var(--gold);
+  color:#5a4310; padding:2px 8px; border-radius:99px; font-size:11px; font-weight:800;
+  margin:2px 3px 2px 0; letter-spacing:.3px;
+}
+.patron-hint.patron-memo{
+  background:#fff8e2; border-left-color:var(--gold); color:var(--ink);
+  display:flex; align-items:flex-start; gap:8px;
+}
+.patron-hint.patron-memo .icon{ color:var(--gold); width:16px; height:16px; flex-shrink:0; margin-top:1px; }
+.patron-hint.patron-rel{ font-size:12.5px; }
+.patron-hint.patron-rel .icon{ width:14px; height:14px; vertical-align:-2px; }
+.patron-hint a.rel-link{
+  display:inline-block; color:var(--green-700); text-decoration:none;
+  font-weight:800; margin:0 2px; padding:1px 6px; border-radius:5px; background:#eef4ee;
+}
+.patron-hint a.rel-link:hover{ background:var(--green-700); color:#fff; }
+
+/* pg-id chico para familias temáticas (contador) */
+.pg-id.small{ font-family:var(--font-body); font-size:14px; padding:3px 8px; background:var(--green-700); color:var(--gold-light); }
+
+/* flash cuando saltas a una pregunta relacionada */
+.hack-card.flash{ animation:flashcard 1.5s ease; }
+@keyframes flashcard{
+  0%{ box-shadow:0 0 0 4px rgba(201,164,76,0.6); }
+  100%{ box-shadow:none; }
+}
 .patron-chip{
   display:inline-flex; align-items:center; gap:5px;
   font-size:11.5px; font-weight:700; color:var(--ink-soft);
