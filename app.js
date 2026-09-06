@@ -1548,25 +1548,45 @@ async function renderSimulacros(){
     $app.innerHTML = `<h1>Simulacros 15×100</h1><div class="card"><div class="empty">Cargando 15 exámenes oficiales…</div></div>`;
     return;
   }
+  // v2: materias_proporcion es un mapa {materia: [n1,n2,...,n15]}, uno por examen
   const prop = SIM.materias_proporcion || {};
-  const propHtml = Object.entries(prop).map(([m,c])=>`<span class="patron-chip">${escapeHtml(m)} · ${c}</span>`).join(" ");
+  const isMatriz = SIM._generado === true;
+  // Chip resumen: para cada materia, el promedio (todos los exámenes tienen ese o ±1)
+  const materiasKeys = Object.keys(prop);
+  const propHtml = materiasKeys.map(m => {
+    const arr = Array.isArray(prop[m]) ? prop[m] : [prop[m]];
+    const min = Math.min(...arr), max = Math.max(...arr);
+    const label = min === max ? `${min}` : `${min}-${max}`;
+    return `<span class="patron-chip">${escapeHtml(m)} · ${label}</span>`;
+  }).join(" ");
 
   $app.innerHTML = `
-    <h1>Simulacros 15×100 <span class="hack-tag">1500 preguntas · sin repetir</span></h1>
-    <p class="subtitle">Los 15 exámenes oficiales del proceso de ascenso 2026, con la misma proporción por materia que el examen real. Cada uno tiene 100 preguntas únicas y su clave al final.</p>
+    <h1>Simulacros 15×100 <span class="hack-tag">${isMatriz ? "matriz maestra · 1500 sin repetir" : "1500 preguntas · sin repetir"}</span></h1>
+    <p class="subtitle">${isMatriz
+      ? `Los 15 exámenes fueron generados con <b>matriz maestra balanceada</b>: cada examen tiene exactamente 100 preguntas (50 comunes + 50 especialidad), las mismas proporciones por materia con rotación equilibrada, y ninguna pregunta se repite entre exámenes. Cada uno consume su parte exacta de las 1500.`
+      : `Los 15 exámenes oficiales del proceso de ascenso 2026, con la misma proporción por materia que el examen real. Cada uno tiene 100 preguntas únicas y su clave al final.`
+    }</p>
     <div class="patron-chips" style="margin:14px 0">${propHtml}</div>
 
     <div class="rr-list">
       ${SIM.examenes.map(e=>{
         const done = getHistory().find(h=> (h.tipo||"") === "simulacro" && h.simN === e.n);
         const scoreHtml = done ? `<span class="rr-badge" style="background:${done.aciertos>=70?'var(--green-ok)':'#8a6a23'}">${done.aciertos}/${done.total}</span>` : `<span class="rr-badge">100 preg</span>`;
+        // Chips de composición (solo si la matriz los trae)
+        const compHtml = e.composicion
+          ? `<div class="sim-compo">${Object.entries(e.composicion).sort((a,b)=>b[1]-a[1]).slice(0,10).map(([m,c])=>`<span class="patron-chip">${escapeHtml(m)}·${c}</span>`).join("")}${Object.keys(e.composicion).length>10?` <span class="ink-soft">+${Object.keys(e.composicion).length-10} más</span>`:""}</div>`
+          : "";
+        const balHtml = (e.total_comun && e.total_esp)
+          ? `<span class="ink-soft" style="font-size:11.5px">· ${e.total_comun} común + ${e.total_esp} esp.</span>`
+          : "";
         return `
           <div class="rr-card" data-simn="${e.n}" role="button" tabindex="0">
             <div class="rr-head">
               ${scoreHtml}
-              <span class="rr-resp">Examen N° ${String(e.n).padStart(2,'0')}</span>
+              <span class="rr-resp">Examen N° ${String(e.n).padStart(2,'0')} ${balHtml}</span>
             </div>
-            <div class="rr-ns">${done ? `Última nota: ${done.aciertos} aciertos · ${new Date(done.fecha).toLocaleDateString()}` : "Sin tomar todavía"}</div>
+            <div class="rr-ns" style="margin-bottom:6px">${done ? `Última nota: ${done.aciertos} aciertos · ${new Date(done.fecha).toLocaleDateString()}` : "Sin tomar todavía"}</div>
+            ${compHtml}
           </div>`;
       }).join("")}
     </div>`;
