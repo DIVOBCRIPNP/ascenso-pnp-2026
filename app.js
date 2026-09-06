@@ -157,6 +157,8 @@ function render(opts){
   if(view === "banco") return renderBanco();
   if(view === "hack") return renderHack();
   if(view === "examen") return renderExamenEntry();
+  if(view === "simulacros") return renderSimulacros();
+  if(view === "simulacro_run") return renderSimulacroRun();
   if(view === "ranking") return renderRanking();
   if(view === "chat") return renderChat();
   if(view === "historial") return renderHistorial();
@@ -352,9 +354,21 @@ let patronRespuestas = new Map(); // n de pregunta → índice de opción elegid
 async function ensureMatriz(){
   if(MATRIZ) return MATRIZ;
   try{
-    // no-store: la matriz cambia con cada actualización del banco, no queremos versión vieja
     const r = await fetch("data/patrones.json", { cache: "no-store" });
     if(r.ok) MATRIZ = await r.json();
+    // También fusionamos los hallazgos por materia (data/patrones_por_materia.json)
+    try{
+      const r2 = await fetch("data/patrones_por_materia.json", { cache: "no-store" });
+      if(r2.ok){
+        const pm = await r2.json();
+        MATRIZ.por_materia = pm;
+        // Adjuntar hallazgos a cada pregunta
+        Object.entries(pm.por_pregunta || {}).forEach(([n, info])=>{
+          if(!MATRIZ.por_pregunta[n]) MATRIZ.por_pregunta[n] = {};
+          MATRIZ.por_pregunta[n].hallazgo = info;
+        });
+      }
+    }catch(e){}
   }catch(e){}
   return MATRIZ;
 }
@@ -437,11 +451,13 @@ function renderRutaGeneral(){
       <button data-vista="familias" class="${patronVista==='familias'?'active':''}" role="tab">Familias temáticas (${familias.length})</button>
       <button data-vista="rr" class="${patronVista==='rr'?'active':''}" role="tab">Familias RR (${(MATRIZ.motor?.indices?.RR_groups||[]).length})</button>
       <button data-vista="articulos" class="${patronVista==='articulos'?'active':''}" role="tab">Artículos ancla (${Object.keys(MATRIZ.motor?.indices?.AN_index||{}).length})</button>
+      <button data-vista="materias" class="${patronVista==='materias'?'active':''}" role="tab">Por materia (${(MATRIZ.por_materia?.materias||[]).length})</button>
     </div>
 
     ${patronVista==='familias' ? `<div class="patron-grupos">${familias.map(familiaCard).join("")}</div>` : ""}
     ${patronVista==='rr'       ? renderRRList() : ""}
     ${patronVista==='articulos'? renderANList() : ""}
+    ${patronVista==='materias' ? renderMateriasList() : ""}
     ${patronVista==='ruta'     ? `<h2>Ruta sugerida — estúdialas en este orden</h2>
          <div class="patron-grupos">${g.map(grupoCard).join("")}</div>` : ""}
 
@@ -495,6 +511,22 @@ function renderRutaGeneral(){
       const ns = (MATRIZ.motor?.indices?.AN_index||{})[art];
       if(!ns) return;
       patronSyn = { id:"AN:"+art, label:`Artículo ancla (AN) · Art. ${art}`, dificultad:"MEDIA", como_estudiar:"Todas se apoyan en el mismo artículo. Estúdialo una vez, resuelve todas.", n:ns };
+      patronGrupo = null; patronFamilia = null;
+      patronRevealed.clear();
+      renderHack();
+      window.scrollTo({top:0, behavior:"smooth"});
+    };
+    el.onclick = go;
+    el.onkeydown = (e)=>{ if(e.key==="Enter"||e.key===" "){ e.preventDefault(); go(); } };
+  });
+  // Artículos por materia (vista "materias") — clic abre grupo sintético con las preguntas del artículo
+  $app.querySelectorAll(".art-hall[data-artns]").forEach(el=>{
+    const go = ()=>{
+      const ns = el.dataset.artns.split(",").map(Number).filter(x=>x>0);
+      const art = el.dataset.artlabel;
+      const mat = el.dataset.materia;
+      if(!ns.length) return;
+      patronSyn = { id:"MAT:"+mat+":"+art, label:`${mat} · ${art}`, dificultad:"MEDIA", como_estudiar:"Preguntas del mismo artículo agrupadas para estudiar el hallazgo dominante.", n:ns };
       patronGrupo = null; patronFamilia = null;
       patronRevealed.clear();
       renderHack();
@@ -623,8 +655,15 @@ function renderGrupoPatron(grpParam){
     const tecMotor = motor.tecnica
       ? `<div class="patron-hint patron-regla">${svg("book")} <span><b>Técnica del motor:</b> ${escapeHtml(motor.tecnica)}</span></div>`
       : "";
+    // Hallazgo por MATERIA/ARTÍCULO (patrones_por_materia.json)
+    const hall = info.hallazgo;
+    const hallBloque = hall ? `
+      <div class="patron-hint patron-memo" style="border-left-color:#5a3a8a;background:#f3ecfa">
+        <span style="color:#5a3a8a;flex-shrink:0">🎓</span>
+        <span><b>Hallazgo ${escapeHtml((hall.materia||'').slice(0,50))} · ${escapeHtml(hall.articulo||'')}:</b> ${escapeHtml(hall.hallazgo_texto||'')}</span>
+      </div>` : "";
     const legal = q.ubicacion ? `<div class="legal" style="margin-top:6px">Base legal: ${escapeHtml(q.ubicacion)}</div>` : "";
-    const analisis = memo + tec + tecMotor + kws + rels + relsPE + relsDR + legal;
+    const analisis = memo + tec + tecMotor + hallBloque + kws + rels + relsPE + relsDR + legal;
 
     let body;
     if(!patronHide){
@@ -817,6 +856,42 @@ function renderRRList(){
 
 // Renderiza el listado de artículos ancla (AN): artículos normativos donde
 // se apoyan múltiples preguntas del banco.
+// Vista "Por materia": lista las 22 materias con sus hallazgos por artículo.
+// Al hacer clic en un artículo, se abre como grupo sintético con las preguntas del artículo.
+function renderMateriasList(){
+  const pm = MATRIZ.por_materia;
+  if(!pm) return `<div class="card"><div class="empty">Cargando hallazgos por materia…</div></div>`;
+  const materias = pm.materias || [];
+  return `
+    <p class="subtitle" style="margin-bottom:14px">Las 22 materias del banco, desglosadas por artículo con los <b>hallazgos automáticos</b> del motor (respuesta dominante, palabras clave, instituciones, patrones binarios).</p>
+    <div class="materia-hall-list">
+      ${materias.map(m => `
+        <details class="materia-hall">
+          <summary>
+            <span class="rr-badge">${m.total}</span>
+            <span class="rr-resp">${escapeHtml(m.materia.slice(0, 90))}</span>
+            <span class="ink-soft">${m.articulos.length} art.</span>
+          </summary>
+          <div class="materia-arts">
+            ${m.articulos.map(a => `
+              <div class="art-hall" data-artns="${a.hallazgo.ns.join(',')}" data-artlabel="${escapeHtml(a.articulo || 'Sin artículo')}" data-materia="${escapeHtml(m.materia.slice(0,60))}" role="button" tabindex="0">
+                <div class="art-hall-head">
+                  <b>${escapeHtml(a.articulo || '(sin artículo)')}</b>
+                  <span class="ink-soft">${a.cantidad} preguntas</span>
+                </div>
+                <div class="art-hall-text">${escapeHtml(a.hallazgo_texto)}</div>
+                <div class="art-hall-chips">
+                  ${a.hallazgo.categoria_dominante ? `<span class="patron-chip cj">§ ${escapeHtml(a.hallazgo.categoria_dominante.cat)} ${a.hallazgo.categoria_dominante.cantidad}/${a.hallazgo.categoria_dominante.de}</span>` : ""}
+                  ${(a.hallazgo.instituciones||[]).slice(0,4).map(i=> `<span class="patron-chip ac">👤 ${escapeHtml(i.nombre)} ×${i.cantidad}</span>`).join("")}
+                  ${(a.hallazgo.verbos||[]).slice(0,3).map(v=> `<span class="patron-chip vr">⚡ ${escapeHtml(v.verbo)} ×${v.cantidad}</span>`).join("")}
+                  ${a.hallazgo.patron_binario ? `<span class="patron-chip conf alta">⚖ ${escapeHtml(a.hallazgo.patron_binario.palabra_mayoria)} (${a.hallazgo.patron_binario.n_mayoria}) vs ${escapeHtml(a.hallazgo.patron_binario.palabra_minoria)} (${a.hallazgo.patron_binario.n_minoria})</span>` : ""}
+                </div>
+              </div>`).join("")}
+          </div>
+        </details>`).join("")}
+    </div>`;
+}
+
 function renderANList(){
   const idx = MATRIZ.motor?.indices?.AN_index || {};
   const entries = Object.entries(idx).sort((a,b)=> b[1].length - a[1].length);
@@ -1453,5 +1528,182 @@ function setupUserUI(){
     if(window.Auth && typeof window.Auth.flushProgress === "function") window.Auth.flushProgress();
   });
 })();
+
+/* ==================== SIMULACROS 15×100 ==================== */
+let SIM = null;                // data/simulacros.json (lazy)
+let simActivo = null;          // examen actual en modo run: {n, preguntas, respuestas: Map<n,idx>, inicio}
+
+async function ensureSim(){
+  if(SIM) return SIM;
+  try{
+    const r = await fetch("data/simulacros.json", {cache:"no-store"});
+    if(r.ok) SIM = await r.json();
+  }catch(e){}
+  return SIM;
+}
+
+async function renderSimulacros(){
+  await ensureSim();
+  if(!SIM){
+    $app.innerHTML = `<h1>Simulacros 15×100</h1><div class="card"><div class="empty">Cargando 15 exámenes oficiales…</div></div>`;
+    return;
+  }
+  const prop = SIM.materias_proporcion || {};
+  const propHtml = Object.entries(prop).map(([m,c])=>`<span class="patron-chip">${escapeHtml(m)} · ${c}</span>`).join(" ");
+
+  $app.innerHTML = `
+    <h1>Simulacros 15×100 <span class="hack-tag">1500 preguntas · sin repetir</span></h1>
+    <p class="subtitle">Los 15 exámenes oficiales del proceso de ascenso 2026, con la misma proporción por materia que el examen real. Cada uno tiene 100 preguntas únicas y su clave al final.</p>
+    <div class="patron-chips" style="margin:14px 0">${propHtml}</div>
+
+    <div class="rr-list">
+      ${SIM.examenes.map(e=>{
+        const done = getHistory().find(h=> (h.tipo||"") === "simulacro" && h.simN === e.n);
+        const scoreHtml = done ? `<span class="rr-badge" style="background:${done.aciertos>=70?'var(--green-ok)':'#8a6a23'}">${done.aciertos}/${done.total}</span>` : `<span class="rr-badge">100 preg</span>`;
+        return `
+          <div class="rr-card" data-simn="${e.n}" role="button" tabindex="0">
+            <div class="rr-head">
+              ${scoreHtml}
+              <span class="rr-resp">Examen N° ${String(e.n).padStart(2,'0')}</span>
+            </div>
+            <div class="rr-ns">${done ? `Última nota: ${done.aciertos} aciertos · ${new Date(done.fecha).toLocaleDateString()}` : "Sin tomar todavía"}</div>
+          </div>`;
+      }).join("")}
+    </div>`;
+
+  $app.querySelectorAll(".rr-card[data-simn]").forEach(el=>{
+    const go = ()=>{
+      const n = Number(el.dataset.simn);
+      const ex = SIM.examenes.find(x=> x.n === n);
+      if(!ex) return;
+      simActivo = { n, preguntas: ex.preguntas, respuestas: new Map(), inicio: Date.now(), titulo: ex.titulo };
+      view = "simulacro_run";
+      render();
+      window.scrollTo({top:0, behavior:"smooth"});
+    };
+    el.onclick = go;
+    el.onkeydown = (e)=>{ if(e.key==="Enter"||e.key===" "){ e.preventDefault(); go(); } };
+  });
+}
+
+function renderSimulacroRun(){
+  if(!simActivo){ view = "simulacros"; return render(); }
+  const {n, preguntas, respuestas} = simActivo;
+  const contestadas = respuestas.size;
+  const finalizado = simActivo.finalizado || false;
+
+  let bodyHtml;
+  if(!finalizado){
+    // Modo examen: pinta todas las preguntas con las alternativas para marcar
+    bodyHtml = preguntas.map((q, i) => {
+      const picked = respuestas.get(q.n);
+      const opts = q.opciones.map((op, oi)=>{
+        const marked = picked === oi ? " marked" : "";
+        return `<label class="qoption${marked}"><input type="radio" name="p${q.n}" value="${oi}" ${picked===oi?"checked":""}><span class="letter">${"ABCDE"[oi]}</span><span>${escapeHtml(op)}</span></label>`;
+      }).join("");
+      const materia = q.materia ? `<div class="qmeta" style="margin-bottom:4px">${escapeHtml(q.materia.slice(0,80))}</div>` : "";
+      return `
+        <div class="hack-card" data-preg="${q.n}">
+          <div class="hack-q-top"><span class="hack-num">${i+1}</span></div>
+          ${materia}
+          <div class="qtext">${escapeHtml(q.pregunta)}</div>
+          <div class="patron-opts">${opts}</div>
+        </div>`;
+    }).join("");
+  } else {
+    // Modo revisión: muestra correcto/incorrecto por pregunta con la respuesta oficial
+    bodyHtml = preguntas.map((q, i) => {
+      const picked = respuestas.get(q.n);
+      const acierto = picked === q.correcta;
+      const opts = q.opciones.map((op, oi)=>{
+        let cls = "qoption";
+        if(oi === q.correcta) cls += " correct";
+        else if(oi === picked) cls += " incorrect";
+        return `<div class="${cls}"><span class="letter">${"ABCDE"[oi]}</span><span>${escapeHtml(op)}</span></div>`;
+      }).join("");
+      return `
+        <div class="hack-card${acierto?'':' known'}" style="${acierto?'':'border-left:3px solid var(--red);'}">
+          <div class="hack-q-top">
+            <span class="hack-num">${i+1}</span>
+            ${acierto ? `<span class="patron-chip conf mvalta">✓ Correcto</span>` : (picked===undefined ? `<span class="patron-chip">Sin responder</span>` : `<span class="patron-chip dif dif-alta">✗ Incorrecto</span>`)}
+          </div>
+          <div class="qmeta" style="margin-bottom:4px">${escapeHtml((q.materia||"").slice(0,80))}</div>
+          <div class="qtext">${escapeHtml(q.pregunta)}</div>
+          <div class="patron-opts">${opts}</div>
+        </div>`;
+    }).join("");
+  }
+
+  $app.innerHTML = `
+    <a href="#" id="sim-back" class="back-link">← Volver a Simulacros</a>
+    <div class="sim-header">
+      <div>
+        <h1>${escapeHtml(simActivo.titulo || `Examen N° ${n}`)}</h1>
+        <p class="subtitle">${finalizado ? `Revisión de resultados` : `${contestadas} de ${preguntas.length} contestadas`}</p>
+      </div>
+      <div class="sim-timer">
+        <span id="sim-timer-txt">${finalizado ? "" : "00:00"}</span>
+        ${finalizado
+          ? `<div style="text-align:right"><b style="font-size:22px;color:var(--green-700)">${simActivo.aciertos||0}</b><span> / ${preguntas.length} aciertos</span></div>`
+          : `<button id="sim-finalizar" class="mark-btn primary">Terminar y ver resultado</button>`
+        }
+      </div>
+    </div>
+    <div class="hack-list">${bodyHtml}</div>`;
+
+  document.getElementById("sim-back").onclick = (e)=>{
+    e.preventDefault();
+    if(!finalizado && contestadas > 0 && !confirm("¿Salir sin terminar el simulacro?")) return;
+    simActivo = null; view = "simulacros"; render();
+  };
+
+  if(!finalizado){
+    // Bind radios
+    $app.querySelectorAll(".patron-opts input[type=radio]").forEach(inp=>{
+      inp.addEventListener("change", ()=>{
+        const card = inp.closest(".hack-card");
+        const pn = Number(card.dataset.preg);
+        respuestas.set(pn, Number(inp.value));
+        // actualiza contador
+        const contestadasNow = respuestas.size;
+        const subtitle = document.querySelector(".sim-header .subtitle");
+        if(subtitle) subtitle.textContent = `${contestadasNow} de ${preguntas.length} contestadas`;
+      });
+    });
+    // Botón terminar
+    document.getElementById("sim-finalizar").onclick = ()=>{
+      if(respuestas.size < preguntas.length){
+        if(!confirm(`Solo has contestado ${respuestas.size} de ${preguntas.length}. ¿Terminar de todos modos?`)) return;
+      }
+      let aciertos = 0;
+      preguntas.forEach(q => { if(respuestas.get(q.n) === q.correcta) aciertos++; });
+      simActivo.finalizado = true;
+      simActivo.aciertos = aciertos;
+      // guardar en historial
+      const hist = getHistory();
+      hist.unshift({
+        tipo: "simulacro",
+        simN: n,
+        titulo: simActivo.titulo,
+        aciertos, total: preguntas.length,
+        fecha: new Date().toISOString(),
+        duracionSeg: Math.round((Date.now() - simActivo.inicio) / 1000),
+      });
+      lsSet("pnp_history", hist.slice(0, 100));
+      render();
+      window.scrollTo({top:0, behavior:"smooth"});
+    };
+    // Cronómetro
+    if(simActivo._timerInt) clearInterval(simActivo._timerInt);
+    simActivo._timerInt = setInterval(()=>{
+      const el = document.getElementById("sim-timer-txt");
+      if(!el){ clearInterval(simActivo._timerInt); return; }
+      const s = Math.floor((Date.now() - simActivo.inicio) / 1000);
+      const mm = String(Math.floor(s/60)).padStart(2,"0");
+      const ss = String(s%60).padStart(2,"0");
+      el.textContent = `${mm}:${ss}`;
+    }, 1000);
+  }
+}
 
 })();
