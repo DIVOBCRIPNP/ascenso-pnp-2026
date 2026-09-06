@@ -159,6 +159,7 @@ function render(opts){
   if(view === "examen") return renderExamenEntry();
   if(view === "simulacros") return renderSimulacros();
   if(view === "simulacro_run") return renderSimulacroRun();
+  if(view === "errores") return renderErrores();
   if(view === "ranking") return renderRanking();
   if(view === "chat") return renderChat();
   if(view === "historial") return renderHistorial();
@@ -1529,6 +1530,210 @@ function setupUserUI(){
   });
 })();
 
+/* ==================== MIS ERRORES ==================== */
+// Estado: qué materia está expandida y en qué pregunta está el usuario dentro del repaso
+let erroresRespuestas = new Map(); // n_original → índice elegido en el reintento (efímero, no persiste)
+
+async function renderErrores(){
+  await ensureMatriz();  // para tener por_pregunta → familia
+  const errores = lsGet(ns("errores"), {});
+  const keys = Object.keys(errores);
+
+  if(!keys.length){
+    $app.innerHTML = `
+      <h1>Mis errores</h1>
+      <p class="subtitle">Aquí aparecerán las preguntas que hayas fallado en los simulacros, agrupadas por materia. Podrás reintentarlas y sacarlas de la lista cuando las domines.</p>
+      <div class="card"><div class="empty">Aún no has tomado ningún simulacro con errores. Ve a <b>Simulacros</b> y toma uno; las preguntas falladas aparecerán aquí para repasarlas.</div></div>`;
+    return;
+  }
+
+  // Agrupar errores por materia_corta → familia (familia oculta)
+  const porMateria = {};
+  keys.forEach(k => {
+    const e = errores[k];
+    const mat = e.materia_corta || (e.materia || "Sin materia").slice(0,40);
+    if(!porMateria[mat]) porMateria[mat] = [];
+    porMateria[mat].push(e);
+  });
+
+  // Total y ordenar materias por cantidad
+  const totalErr = keys.length;
+  const materiasSorted = Object.entries(porMateria).sort((a,b)=> b[1].length - a[1].length);
+
+  $app.innerHTML = `
+    <h1>Mis errores <span class="hack-tag">${totalErr} para repasar</span></h1>
+    <p class="subtitle">Preguntas que fallaste en los simulacros. Agrupadas por <b>materia</b> y dentro de cada una, ordenadas por afinidad temática. Reintenta; cuando aciertes una, sale de la lista y queda dominada.</p>
+
+    <div class="rr-list">
+      ${materiasSorted.map(([mat, arr]) => `
+        <div class="rr-card err-materia" data-mat="${escapeHtml(mat)}" role="button" tabindex="0">
+          <div class="rr-head">
+            <span class="rr-badge" style="background:${arr.length>=10?'var(--red)':(arr.length>=5?'#8a6a23':'var(--green-700)')}">${arr.length}</span>
+            <span class="rr-resp">${escapeHtml(mat)}</span>
+          </div>
+          <div class="rr-ns">${arr.length} pregunta${arr.length===1?'':'s'} para repasar · Clic para abrir</div>
+        </div>`).join("")}
+    </div>
+
+    <div style="margin-top:24px;text-align:right">
+      <button id="err-limpiar" class="btn outline" style="font-size:12px;padding:6px 12px">Vaciar mis errores</button>
+    </div>`;
+
+  // Click en materia → despliega repaso
+  $app.querySelectorAll(".err-materia").forEach(el=>{
+    const go = ()=>{
+      const mat = el.dataset.mat;
+      renderErroresMateria(mat, porMateria[mat]);
+    };
+    el.onclick = go;
+    el.onkeydown = (e)=>{ if(e.key==="Enter"||e.key===" "){ e.preventDefault(); go(); } };
+  });
+
+  document.getElementById("err-limpiar").onclick = ()=>{
+    if(!confirm(`¿Vaciar tus ${totalErr} errores? Esto no se puede deshacer.`)) return;
+    lsSet(ns("errores"),{});
+    render();
+  };
+}
+
+// Repaso de errores de UNA materia — agrupados por familia SIN mostrar el nombre.
+// Solo separadores visuales entre familias.
+function renderErroresMateria(mat, arr){
+  // Agrupar por familia (usa MATRIZ.por_pregunta[n].familia)
+  const porFam = {};
+  arr.forEach(e => {
+    const info = (MATRIZ && MATRIZ.por_pregunta && MATRIZ.por_pregunta[e.n_original]) || {};
+    const fam = info.familia || info.grupo || "__sin_familia__";
+    if(!porFam[fam]) porFam[fam] = [];
+    porFam[fam].push(e);
+  });
+  const famsOrdered = Object.entries(porFam).sort((a,b)=> b[1].length - a[1].length);
+
+  const cardsHtml = famsOrdered.map(([fam, es], gIdx) => {
+    const cards = es.map(e => renderErrorCard(e)).join("");
+    return `<div class="err-group">${cards}</div>`;
+  }).join(`<div class="err-sep" aria-hidden="true"></div>`);
+
+  $app.innerHTML = `
+    <a href="#" id="err-back" class="back-link">← Volver a Mis errores</a>
+    <h1>${escapeHtml(mat)} <span class="hack-tag">${arr.length} para repasar</span></h1>
+    <p class="subtitle">Reintenta cada pregunta. Los grupos están ordenados por afinidad temática (una línea entre bloques). Al acertar, la pregunta sale de la lista.</p>
+    <div class="err-list">${cardsHtml}</div>`;
+
+  document.getElementById("err-back").onclick = (e)=>{ e.preventDefault(); erroresRespuestas.clear(); render(); };
+
+  bindErroresCards();
+}
+
+function renderErrorCard(e){
+  const picked = erroresRespuestas.get(e.n_original);
+  const done = picked !== undefined;
+  const correcto = done && picked === e.correcta;
+  const opts = e.opciones.map((op, oi) => {
+    let cls = "qoption";
+    if(done){
+      if(oi === e.correcta) cls += " correct";
+      else if(oi === picked) cls += " incorrect";
+    }
+    return `<div class="${cls}" data-i="${oi}" data-nerr="${e.n_original}" role="button" tabindex="0"><span class="letter">${"ABCDE"[oi]}</span><span>${escapeHtml(op)}</span></div>`;
+  }).join("");
+
+  // Bloque "Para copiar/memorizar" — respuesta oficial destacada
+  const oficialTxt = e.opciones[e.correcta] || "";
+  const anteriorTxt = e.ultima_elegida != null ? `<div class="err-anterior">✗ Antes marcaste: <b>${"ABCDE"[e.ultima_elegida]}</b> · ${escapeHtml(e.opciones[e.ultima_elegida])}</div>` : "";
+
+  const respBox = done
+    ? `<div class="study-feedback ${correcto?'ok':'bad'}" aria-live="polite">${
+        correcto
+          ? `✓ ¡Correcto! Puedes quitarla ahora.`
+          : `✗ Incorrecto. Vuelve a intentarlo con la respuesta correcta.`
+      }</div>`
+    : "";
+
+  // Bloque copiar (siempre visible antes de responder para memorización)
+  const copyBox = `
+    <div class="err-oficial">
+      <div class="err-oficial-head">📌 Respuesta oficial <button class="err-copy" data-copy="${encodeURIComponent(oficialTxt)}" title="Copiar texto">Copiar</button></div>
+      <div class="err-oficial-txt">${escapeHtml(oficialTxt)}</div>
+    </div>`;
+
+  const btnQuitar = done && correcto
+    ? `<button class="mark-btn primary err-quitar" data-nerr="${e.n_original}">✓ Ya la dominé, quitar de mis errores</button>`
+    : `<button class="mark-btn err-quitar-manual" data-nerr="${e.n_original}" style="background:#eee;color:var(--ink-soft);border:1px solid var(--line)">Marcar como dominada (sin reintento)</button>`;
+
+  return `
+    <div class="hack-card err-card" data-cardn="${e.n_original}">
+      <div class="hack-q-top">
+        <span class="hack-num">#${e.n_original}</span>
+        <span class="patron-chip">Intentos: ${e.intentos}</span>
+      </div>
+      <div class="qtext">${escapeHtml(e.pregunta)}</div>
+      ${copyBox}
+      ${anteriorTxt}
+      <div class="patron-opts" style="margin-top:10px">${opts}</div>
+      ${respBox}
+      <div style="margin-top:10px">${btnQuitar}</div>
+    </div>`;
+}
+
+function bindErroresCards(){
+  // Reintento
+  $app.querySelectorAll(".err-card .patron-opts .qoption").forEach(el=>{
+    const pick = ()=>{
+      const n = Number(el.dataset.nerr);
+      if(erroresRespuestas.has(n)) return;
+      erroresRespuestas.set(n, Number(el.dataset.i));
+      // Si acertó, incrementa "aciertos" en el registro persistido
+      const errs = lsGet(ns("errores"), {});
+      const key = String(n);
+      if(errs[key] && Number(el.dataset.i) === errs[key].correcta){
+        errs[key].aciertos = (errs[key].aciertos || 0) + 1;
+        lsSet(ns("errores"),errs);
+      }
+      // Re-render solo esta tarjeta
+      const card = el.closest(".err-card");
+      const errObj = errs[key] || errs[String(n)];
+      if(card && errObj) card.outerHTML = renderErrorCard(errObj);
+      bindErroresCards();
+    };
+    el.onclick = pick;
+    el.onkeydown = (e)=>{ if(e.key==="Enter"||e.key===" "){ e.preventDefault(); pick(); } };
+  });
+  // Quitar de errores
+  $app.querySelectorAll(".err-quitar, .err-quitar-manual").forEach(btn=>{
+    btn.onclick = ()=>{
+      const n = Number(btn.dataset.nerr);
+      const errs = lsGet(ns("errores"), {});
+      delete errs[String(n)];
+      lsSet(ns("errores"),errs);
+      // Añadir a dominadas
+      if(typeof dominadas !== "undefined"){
+        dominadas.add(n);
+        lsSet("pnp_dominadas", [...dominadas]);
+      }
+      // quitar la tarjeta del DOM
+      btn.closest(".err-card").remove();
+      // Si la materia se quedó sin errores, volver
+      if(!$app.querySelector(".err-card")){
+        setTimeout(()=> render(), 300);
+      }
+    };
+  });
+  // Copiar texto
+  $app.querySelectorAll(".err-copy").forEach(btn=>{
+    btn.onclick = ()=>{
+      const txt = decodeURIComponent(btn.dataset.copy || "");
+      navigator.clipboard?.writeText(txt).then(()=>{
+        const orig = btn.textContent;
+        btn.textContent = "✓ Copiado";
+        setTimeout(()=> btn.textContent = orig, 1500);
+      }).catch(()=>{
+        alert("Texto: " + txt);
+      });
+    };
+  });
+}
+
 /* ==================== SIMULACROS 15×100 ==================== */
 let SIM = null;                // data/simulacros.json (lazy)
 let simActivo = null;          // examen actual en modo run: {n, preguntas, respuestas: Map<n,idx>, inicio}
@@ -1705,7 +1910,30 @@ function renderSimulacroRun(){
         if(!confirm(`Solo has contestado ${respuestas.size} de ${preguntas.length}. ¿Terminar de todos modos?`)) return;
       }
       let aciertos = 0;
-      preguntas.forEach(q => { if(respuestas.get(q.n) === q.correcta) aciertos++; });
+      // Recolectar errores y guardarlos en pnp_errores (para vista "Mis errores")
+      const errores = lsGet(ns("errores"), {});
+      preguntas.forEach(q => {
+        const picked = respuestas.get(q.n);
+        if(picked === q.correcta){ aciertos++; return; }
+        // ES ERROR (o quedó sin responder → picked===undefined también cuenta)
+        const key = String(q.n_original ?? q.n);
+        const prev = errores[key] || {intentos:0, aciertos:0};
+        errores[key] = {
+          n_original: q.n_original ?? q.n,
+          materia: q.materia || "",
+          materia_corta: q.materia_corta || "",
+          pregunta: q.pregunta,
+          opciones: q.opciones,
+          correcta: q.correcta,
+          ubicacion: q.ubicacion || "",
+          ultima_elegida: (picked === undefined ? null : picked),
+          intentos: prev.intentos + 1,
+          aciertos: prev.aciertos,   // aciertos previos en reintentos
+          sim_n: n,
+          fecha: new Date().toISOString(),
+        };
+      });
+      lsSet(ns("errores"),errores);
       simActivo.finalizado = true;
       simActivo.aciertos = aciertos;
       // guardar en historial

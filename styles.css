@@ -771,3 +771,46 @@ label.qoption .letter{flex-shrink:0; font-weight:800; color:var(--green-700); mi
 /* Mix de dificultad por examen */
 .sim-dif{display:flex; flex-wrap:wrap; gap:4px; margin-bottom:6px;}
 .sim-dif .patron-chip{font-size:10.5px; padding:2px 7px; font-weight:700;}
+
+/* ==================== MIS ERRORES ==================== */
+.err-list{display:flex; flex-direction:column; gap:16px;}
+.err-group{display:flex; flex-direction:column; gap:12px;}
+/* Separador visual entre familias (sin mostrar nombre) */
+.err-sep{
+  height:1px; background:linear-gradient(90deg, transparent, var(--gold) 20%, var(--gold) 80%, transparent);
+  margin:14px auto; width:60%; opacity:.55;
+  position:relative;
+}
+.err-sep::before{
+  content:"✦"; color:var(--gold); font-size:12px;
+  position:absolute; left:50%; top:50%; transform:translate(-50%,-50%);
+  background:var(--bg); padding:0 8px;
+}
+.err-card{border-left:4px solid var(--red);}
+.err-oficial{
+  background:#e8f5ec; border:1.5px solid var(--green-ok); border-radius:9px;
+  padding:12px 14px; margin-top:10px;
+}
+.err-oficial-head{
+  display:flex; justify-content:space-between; align-items:center;
+  font-size:12.5px; font-weight:800; color:var(--green-ok); margin-bottom:6px;
+}
+.err-oficial-txt{
+  font-family:var(--font-head); font-size:15px; color:var(--green-900); line-height:1.5;
+}
+.err-copy{
+  background:var(--green-700); color:#fff; border:none; padding:3px 10px;
+  border-radius:6px; font-size:11px; font-weight:700; cursor:pointer;
+}
+.err-copy:hover{background:var(--green-600);}
+.err-anterior{
+  background:var(--red-bg); border-left:3px solid var(--red);
+  padding:8px 12px; margin-top:8px; border-radius:6px;
+  font-size:12.5px; color:var(--red);
+}
+.err-quitar, .err-quitar-manual{cursor:pointer; padding:8px 14px; border-radius:8px; font-weight:700;}
+.back-link{
+  display:inline-block; color:var(--green-700); text-decoration:none;
+  margin-bottom:12px; font-weight:700; font-size:13px;
+}
+.back-link:hover{text-decoration:underline;}
