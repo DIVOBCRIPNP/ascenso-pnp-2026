@@ -767,3 +767,7 @@ label.qoption .letter{flex-shrink:0; font-weight:800; color:var(--green-700); mi
 /* Composición del examen dentro de la tarjeta de simulacro */
 .sim-compo{display:flex; flex-wrap:wrap; gap:4px; margin-top:8px;}
 .sim-compo .patron-chip{font-size:11px; padding:2px 7px;}
+
+/* Mix de dificultad por examen */
+.sim-dif{display:flex; flex-wrap:wrap; gap:4px; margin-bottom:6px;}
+.sim-dif .patron-chip{font-size:10.5px; padding:2px 7px; font-weight:700;}

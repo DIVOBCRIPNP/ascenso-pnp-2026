@@ -1579,6 +1579,14 @@ async function renderSimulacros(){
         const balHtml = (e.total_comun && e.total_esp)
           ? `<span class="ink-soft" style="font-size:11.5px">· ${e.total_comun} común + ${e.total_esp} esp.</span>`
           : "";
+        const difMix = e.dificultad_mix || {};
+        const difHtml = Object.keys(difMix).length ? `
+          <div class="sim-dif">
+            <span class="patron-chip conf baja">Baja ${difMix.BAJA||0}</span>
+            <span class="patron-chip conf med">Media ${difMix.MEDIA||0}</span>
+            <span class="patron-chip conf alta">Alta ${difMix.ALTA||0}</span>
+            <span class="patron-chip conf mvalta">Muy alta ${difMix['MUY ALTA']||0}</span>
+          </div>` : "";
         return `
           <div class="rr-card" data-simn="${e.n}" role="button" tabindex="0">
             <div class="rr-head">
@@ -1586,6 +1594,7 @@ async function renderSimulacros(){
               <span class="rr-resp">Examen N° ${String(e.n).padStart(2,'0')} ${balHtml}</span>
             </div>
             <div class="rr-ns" style="margin-bottom:6px">${done ? `Última nota: ${done.aciertos} aciertos · ${new Date(done.fecha).toLocaleDateString()}` : "Sin tomar todavía"}</div>
+            ${difHtml}
             ${compHtml}
           </div>`;
       }).join("")}

@@ -139,27 +139,47 @@ def main():
     random.seed(42)  # reproducible
     asignaciones = {i: [] for i in range(K)}  # examen_idx → lista de q
 
+    def get_dif(q):
+        """Devuelve la dificultad como bucket: BAJA/MEDIA/ALTA/MUY ALTA.
+        Usa la del XLSX del usuario si existe, sino la del motor, sino BAJA por defecto."""
+        info = PAT.get(str(q["n"]), {})
+        # dificultad del XLSX del usuario (más rica): 'Baja','Media','Alta','Muy alta'
+        d = (info.get("dificultad","") or "").upper().strip()
+        if d:
+            if "MUY" in d and "ALTA" in d: return "MUY ALTA"
+            if "ALTA" in d: return "ALTA"
+            if "MED" in d: return "MEDIA"
+            if "BAJ" in d: return "BAJA"
+        # dificultad del motor
+        motor = info.get("motor", {})
+        conf = (motor.get("confianza","") or "").upper()
+        if "MUY" in conf: return "MUY ALTA"
+        if "ALTA" in conf: return "ALTA"
+        if "MED" in conf: return "MEDIA"
+        return "BAJA"
+
     for name in ORDEN:
         pregs = list(materias_pregs.get(name, []))
         cuotas = mat_cuotas[name]
 
-        # Agrupa por familia temática del motor (para balance fino)
-        por_fam = defaultdict(list)
+        # Agrupa por (familia, dificultad) — balance fino combinado
+        por_fam_dif = defaultdict(list)
         for q in pregs:
-            fam = ""
             info = PAT.get(str(q["n"]), {})
             fam = info.get("familia","") or info.get("grupo","") or ""
-            por_fam[fam].append(q)
-        # Baraja dentro de cada familia
-        for fam in por_fam:
-            random.shuffle(por_fam[fam])
-        # Aplana en round-robin por familia (así cada examen recibe una mezcla equilibrada)
+            dif = get_dif(q)
+            por_fam_dif[(fam, dif)].append(q)
+        # Baraja dentro de cada bucket
+        for k in por_fam_dif:
+            random.shuffle(por_fam_dif[k])
+        # Aplana en round-robin: dificultad primero (así las 4 categorías se dispersan
+        # de forma equilibrada), luego familia. Cada bucket cede 1 pregunta por vuelta.
+        buckets = sorted(por_fam_dif.keys(), key=lambda k: (-len(por_fam_dif[k]), k[1], k[0]))
         cola = []
-        fams = sorted(por_fam.keys(), key=lambda f: -len(por_fam[f]))
-        while any(por_fam[f] for f in fams):
-            for f in fams:
-                if por_fam[f]:
-                    cola.append(por_fam[f].pop(0))
+        while any(por_fam_dif[b] for b in buckets):
+            for b in buckets:
+                if por_fam_dif[b]:
+                    cola.append(por_fam_dif[b].pop(0))
         assert len(cola) == len(pregs)
 
         # Ahora distribuye la cola a los exámenes según sus cuotas
@@ -244,8 +264,34 @@ def main():
     for e in examenes[:3]:
         c = e["composicion"]
         print(f"\n  Examen {e['n']:>2}: común={e['total_comun']}  esp={e['total_esp']}")
-        for m, cnt in sorted(c.items(), key=lambda x: -x[1])[:10]:
+        for m, cnt in sorted(c.items(), key=lambda x: -x[1])[:8]:
             print(f"    {cnt:>3}  {m}")
+
+    # Reporte de dificultad por examen (validar que el balance funciona)
+    print(f"\n=== Balance de DIFICULTAD por examen ===")
+    print(f"{'Examen':>10} {'BAJA':>6} {'MEDIA':>6} {'ALTA':>6} {'MUY':>6}  Total")
+    for e in examenes:
+        difs = Counter()
+        for q in e["preguntas"]:
+            n_orig = q["n_original"]
+            info = PAT.get(str(n_orig), {})
+            d = (info.get("dificultad","") or "").upper().strip()
+            if "MUY" in d and "ALTA" in d: bucket = "MUY ALTA"
+            elif "ALTA" in d: bucket = "ALTA"
+            elif "MED" in d: bucket = "MEDIA"
+            elif "BAJ" in d: bucket = "BAJA"
+            else:
+                motor = info.get("motor", {}); c = (motor.get("confianza","") or "").upper()
+                if "MUY" in c: bucket = "MUY ALTA"
+                elif "ALTA" in c: bucket = "ALTA"
+                elif "MED" in c: bucket = "MEDIA"
+                else: bucket = "BAJA"
+            difs[bucket] += 1
+        e["dificultad_mix"] = dict(difs)
+        print(f"{e['n']:>10} {difs.get('BAJA',0):>6} {difs.get('MEDIA',0):>6} {difs.get('ALTA',0):>6} {difs.get('MUY ALTA',0):>6}  {sum(difs.values())}")
+    # Reescribir OUT con dificultad_mix incluido
+    with open(OUT, "w") as f:
+        json.dump(out, f, ensure_ascii=False)
 
 if __name__ == "__main__":
     main()
