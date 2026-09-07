@@ -346,7 +346,7 @@ let MATRIZ = null;              // data/patrones.json
 let patronGrupo = null;         // grupo activo (P0/G1..G6 o null = ruta general)
 let patronFamilia = null;       // familia activa (id) o null
 let patronSyn = null;           // "grupo sintético" (RR o AN) activo o null
-let patronVista = "ruta";       // 'ruta' | 'familias' | 'rr' | 'articulos'
+let patronVista = "materias";   // única vista: "Por materia"
 let patronHide = false;         // modo auto-evaluación (muestra opciones para marcar)
 let patronPendientes = false;
 let patronRevealed = new Set();
@@ -434,51 +434,19 @@ function renderRutaGeneral(){
       </div>`;
   };
 
+  const nMaterias = (MATRIZ.por_materia?.materias || []).length;
   $app.innerHTML = `
-    <h1>Matriz de patrones <span class="hack-tag">ruta metodológica</span></h1>
-    <p class="subtitle">Las 1500 preguntas del banco no son iguales. Se clasificaron por
-    <b>razonamiento</b> (7 grupos) y por <b>familia temática</b> (${familias.length} bloques). Elige la
-    ruta que prefieras. No se trata de adivinar, sino de leer con la técnica correcta para cada tipo.</p>
+    <h1>Patrones por materia <span class="hack-tag">${nMaterias} materias</span></h1>
+    <p class="subtitle">Elige una materia para ver sus patrones internos: familias de preguntas con la misma respuesta, artículos ancla y hallazgos clave.</p>
 
     <div class="patron-summary">
       <div class="ps-tile"><b>${MATRIZ.meta.total}</b><span>preguntas totales</span></div>
-      <div class="ps-tile"><b>${g.length}</b><span>grupos de razonamiento</span></div>
-      <div class="ps-tile"><b>${familias.length}</b><span>familias temáticas</span></div>
-      <div class="ps-tile"><b>${dominadasTotal}</b><span>ya dominadas por ti</span></div>
+      <div class="ps-tile"><b>${nMaterias}</b><span>materias</span></div>
+      <div class="ps-tile"><b>${dominadasTotal}</b><span>ya dominadas</span></div>
     </div>
 
-    <div class="section-toggle" role="tablist">
-      <button data-vista="ruta" class="${patronVista==='ruta'?'active':''}" role="tab">Ruta (P0–G6)</button>
-      <button data-vista="familias" class="${patronVista==='familias'?'active':''}" role="tab">Familias temáticas (${familias.length})</button>
-      <button data-vista="rr" class="${patronVista==='rr'?'active':''}" role="tab">Familias RR (${(MATRIZ.motor?.indices?.RR_groups||[]).length})</button>
-      <button data-vista="articulos" class="${patronVista==='articulos'?'active':''}" role="tab">Artículos ancla (${Object.keys(MATRIZ.motor?.indices?.AN_index||{}).length})</button>
-      <button data-vista="materias" class="${patronVista==='materias'?'active':''}" role="tab">Por materia (${(MATRIZ.por_materia?.materias||[]).length})</button>
-    </div>
-
-    ${patronVista==='familias' ? `<div class="patron-grupos">${familias.map(familiaCard).join("")}</div>` : ""}
-    ${patronVista==='rr'       ? renderRRList() : ""}
-    ${patronVista==='articulos'? renderANList() : ""}
-    ${patronVista==='materias' ? renderMateriasList() : ""}
-    ${patronVista==='ruta'     ? `<h2>Ruta sugerida — estúdialas en este orden</h2>
-         <div class="patron-grupos">${g.map(grupoCard).join("")}</div>` : ""}
-
-    <div class="card patron-plan">
-      <h2>Plan de vueltas</h2>
-      <ol>
-        <li><b>Vuelta 0 — P0:</b> RD modificadas y ratificadas. Fija la versión oficial.</li>
-        <li><b>Vuelta 1 — G1 + G2:</b> Base fácil: definiciones y autoridades.</li>
-        <li><b>Vuelta 2 — G3:</b> Números, plazos, años y cantidades.</li>
-        <li><b>Vuelta 3 — G4:</b> Familias de inicio repetido.</li>
-        <li><b>Vuelta 4 — G5:</b> Distractores similares y palabra cambiante.</li>
-        <li><b>Vuelta 5 — G6:</b> Negativas, excepciones y lectura inversa.</li>
-        <li><b>Vuelta 6:</b> Simulacros mixtos de 50 a 100 preguntas por sesión.</li>
-      </ol>
-    </div>
+    ${renderMateriasList()}
   `;
-
-  $app.querySelectorAll('.section-toggle button[data-vista]').forEach(b=>{
-    b.onclick = ()=>{ patronVista = b.dataset.vista; renderHack(); };
-  });
   $app.querySelectorAll(".patron-grupo-card").forEach(el=>{
     const go = ()=>{
       if(el.dataset.g){ patronGrupo = el.dataset.g; patronFamilia = null; patronSyn = null; }
@@ -602,76 +570,27 @@ function renderGrupoPatron(grpParam){
   }
   function cardHTML(q){
     const info = (MATRIZ.por_pregunta && MATRIZ.por_pregunta[q.n]) || {};
+    const motor = info.motor || {};
     const known = dominadas.has(q.n);
     const palabras = info.palabras_cambian || [];
 
-    // Chips: familia + subfamilia + tipos de coincidencia + señales del motor
-    let chips = "";
-    if(info.familia)     chips += `<span class="patron-chip fam" title="Familia temática">${svg("book")} ${escapeHtml(info.familia)}</span>`;
-    if(info.subfamilia && info.subfamilia !== info.familia)
-                          chips += `<span class="patron-chip subfam">${escapeHtml(info.subfamilia)}</span>`;
-    if(info.dificultad)  chips += `<span class="patron-chip dif ${difClass(info.dificultad)}">${escapeHtml(info.dificultad)}</span>`;
-    (info.tipos||[]).forEach(t => chips += `<span class="patron-chip">${escapeHtml(t)}</span>`);
-
-    // Chips del MOTOR (algoritmo): confianza + artículo ancla + verbo + autoridad + plazo + frase canónica
-    const motor = info.motor || {};
-    if(motor.confianza){
-      const cc = { "MUY ALTA":"mvalta", "ALTA":"alta", "MEDIA":"med", "BAJA":"baja" }[motor.confianza] || "";
-      chips += `<span class="patron-chip conf ${cc}" title="Confianza del motor de patrones">🎯 ${escapeHtml(motor.confianza)}</span>`;
-    }
-    if(motor.articulo_ancla) chips += `<span class="patron-chip an" title="Artículo ancla">📖 Art. ${escapeHtml(motor.articulo_ancla)}</span>`;
-    if(motor.verbo_rector)   chips += `<span class="patron-chip vr" title="Verbo rector">⚡ ${escapeHtml(motor.verbo_rector)}</span>`;
-    (motor.autoridades||[]).forEach(a=> chips += `<span class="patron-chip ac" title="Autoridad competente">👤 ${escapeHtml(a)}</span>`);
-    (motor.plazos||[]).forEach(p=> chips += `<span class="patron-chip np" title="Plazo o cantidad">⏱ ${escapeHtml(p)}</span>`);
-    (motor.categoria_juridica||[]).forEach(c=> chips += `<span class="patron-chip cj" title="Categoría jurídica">§ ${escapeHtml(c)}</span>`);
-    (motor.frases_canonicas||[]).forEach(f=> chips += `<span class="patron-chip fc" title="Frase canónica">📜 ${escapeHtml(f)}</span>`);
-
-    // Panel "análisis" (memorización + palabras + relacionadas)
-    const memo = info.observacion
-      ? `<div class="patron-hint patron-memo">${svg("star")} <span><b>Para memorizar:</b> ${escapeHtml(info.observacion)}</span></div>`
-      : "";
-    const tec  = info.tecnica
-      ? `<div class="patron-hint patron-regla">${svg("book")} <span><b>Técnica:</b> ${escapeHtml(info.tecnica)}</span></div>`
-      : "";
-    const kws  = palabras.length
-      ? `<div class="patron-hint"><b>Palabras que cambian:</b> ${palabras.map(p=>`<span class="kw-chip">${escapeHtml(p)}</span>`).join(" ")}</div>`
-      : "";
-    // Hermanas RR del motor si el usuario no lo trae (más completo que el ranking XLSX)
-    const relas = (info.relacionadas && info.relacionadas.length) ? info.relacionadas
-                 : (motor.familia_rr_hermanas || []);
-    const rels = relas.length
-      ? `<div class="patron-hint patron-rel"><b>${svg("chart")} Relacionadas (misma respuesta):</b> ${relas.slice(0,15).map(n=>`<a href="#" class="rel-link" data-rel="${n}">#${n}</a>`).join(", ")}${relas.length>15?` <span class="ink-soft">y ${relas.length-15} más</span>`:""}</div>`
-      : "";
-    // Preguntas espejo (tronco común, pero respuesta distinta)
-    const espejos = (motor.espejo_hermanas||[]);
-    const relsPE = espejos.length
-      ? `<div class="patron-hint patron-rel"><b>🪞 Preguntas espejo (mismo inicio, otra respuesta):</b> ${espejos.slice(0,10).map(n=>`<a href="#" class="rel-link" data-rel="${n}">#${n}</a>`).join(", ")}</div>`
-      : "";
-    // Distractores recurrentes
-    const drs = (motor.distractores_recurrentes||[]);
-    const relsDR = drs.length
-      ? `<div class="patron-hint"><b>⚠ Distractores frecuentes en esta respuesta:</b> ${drs.map(d=>`<span class="kw-chip" style="background:#fbe9e6;border-color:#e0a5a0;color:#7a2a25">${escapeHtml(d.slice(0,40))}${d.length>40?'…':''}</span>`).join(" ")}</div>`
-      : "";
-    // Técnica del motor
-    const tecMotor = motor.tecnica
-      ? `<div class="patron-hint patron-regla">${svg("book")} <span><b>Técnica del motor:</b> ${escapeHtml(motor.tecnica)}</span></div>`
-      : "";
-    // Hallazgo por MATERIA/ARTÍCULO (patrones_por_materia.json)
-    const hall = info.hallazgo;
-    const hallBloque = hall ? `
-      <div class="patron-hint patron-memo" style="border-left-color:#5a3a8a;background:#f3ecfa">
-        <span style="color:#5a3a8a;flex-shrink:0">🎓</span>
-        <span><b>Hallazgo ${escapeHtml((hall.materia||'').slice(0,50))} · ${escapeHtml(hall.articulo||'')}:</b> ${escapeHtml(hall.hallazgo_texto||'')}</span>
-      </div>` : "";
-    const legal = q.ubicacion ? `<div class="legal" style="margin-top:6px">Base legal: ${escapeHtml(q.ubicacion)}</div>` : "";
-    const analisis = memo + tec + tecMotor + hallBloque + kws + rels + relsPE + relsDR + legal;
+    // MÁXIMO 3 señales, priorizadas. Colores que dan pista de la respuesta.
+    const señales = [];
+    if(motor.autoridades && motor.autoridades.length) señales.push({t:motor.autoridades[0], cls:"ac", icon:"👤"});
+    if(motor.plazos && motor.plazos.length) señales.push({t:motor.plazos[0], cls:"np", icon:"⏱"});
+    if(motor.articulo_ancla) señales.push({t:`Art. ${motor.articulo_ancla}`, cls:"an", icon:"📖"});
+    if(señales.length < 3 && motor.verbo_rector) señales.push({t:motor.verbo_rector, cls:"vr", icon:"⚡"});
+    if(señales.length < 3 && (motor.categoria_juridica||[]).length)
+      señales.push({t:motor.categoria_juridica[0], cls:"cj", icon:"§"});
+    const señalHtml = señales.slice(0,3).map(s =>
+      `<span class="patron-chip ${s.cls}">${s.icon} ${escapeHtml(s.t)}</span>`).join("");
 
     let body;
     if(!patronHide){
-      // Modo memorización: muestra directamente la respuesta correcta
-      body = `<div class="hack-answer">${svg("check")} <span>${escapeHtml(q.respuesta || q.opciones[q.correcta] || "")}</span></div>${analisis}`;
+      // Modo memorización: solo la respuesta destacada (limpia)
+      body = `<div class="hack-answer">${svg("check")} <span>${escapeHtml(q.respuesta || q.opciones[q.correcta] || "")}</span></div>`;
     } else {
-      // Modo auto-evaluación: muestra opciones interactivas (barajadas)
+      // Modo auto-evaluación: opciones + feedback minimalista
       const seed = q.n;
       const order = shuffleSeed(q.opciones.map((_,i)=>i), seed);
       const picked = patronRespuestas.get(q.n);
@@ -683,7 +602,6 @@ function renderGrupoPatron(grpParam){
           if(origIdx === q.correcta) cls += " correct";
           else if(origIdx === picked) cls += " incorrect";
         }
-        // ¡AQUÍ resaltamos las palabras cambiantes en cada alternativa!
         const html = escapeAndHighlight(q.opciones[origIdx], palabras);
         return `<div class="${cls}" data-i="${origIdx}" data-q="${q.n}" role="button" tabindex="0"><span class="letter">${"ABCDE"[shownPos]||shownPos+1}</span><span>${html}</span></div>`;
       }).join("");
@@ -691,8 +609,8 @@ function renderGrupoPatron(grpParam){
         ? `<div class="study-feedback ${acierto?'ok':'bad'}" aria-live="polite">${
             acierto
               ? `${svg("check")} ¡Correcto!`
-              : `${svg("trash")} Incorrecto. La respuesta correcta es: ${escapeAndHighlight(q.opciones[q.correcta], palabras)}`
-          }</div>${analisis}`
+              : `${svg("trash")} Correcta: ${escapeHtml(q.opciones[q.correcta])}`
+          }</div>`
         : "";
       body = `<div class="patron-opts">${opts}</div>${feedback}`;
     }
@@ -700,13 +618,12 @@ function renderGrupoPatron(grpParam){
       <div class="hack-card${known?' known':''}">
         <div class="hack-q-top">
           <span class="hack-num">${q.n}</span>
-          <span class="qmeta">${shortMateria(q.materia)}</span>
-          <button class="mark-btn hack-know ${known?'marked':''}" data-q="${q.n}" aria-pressed="${known?'true':'false'}">
+          ${señalHtml}
+          <button class="mark-btn hack-know ${known?'marked':''}" data-q="${q.n}" aria-pressed="${known?'true':'false'}" style="margin-left:auto">
             ${svg("check")} ${known?'Ya me la sé':'Marcar'}
           </button>
         </div>
         <div class="qtext" style="font-size:15px">${escapeHtml(q.pregunta)}</div>
-        ${chips ? `<div class="patron-chips">${chips}</div>` : ""}
         ${body}
       </div>`;
   }
@@ -942,18 +859,24 @@ function renderExamenEntry(){
   const comunes = dist.filter(d=>d.grupo==="Materias Comunes").reduce((a,b)=>a+b.n,0);
   const especialidad = dist.filter(d=>d.grupo==="Materias de Especialidad").reduce((a,b)=>a+b.n,0);
 
+  // Materias únicas del banco para el selector "Por materia"
+  const materiasSet = {};
+  DATA.forEach(q => { if(q.materia) materiasSet[q.materia] = (materiasSet[q.materia]||0) + 1; });
+  const materiasArr = Object.entries(materiasSet).sort((a,b) => b[1] - a[1]);
+
   $app.innerHTML = `
-    <h1>Simulacro de examen</h1>
-    <p class="subtitle">Distribución proporcional automática según el peso de cada materia en el banco de ${DATA.length} preguntas.</p>
+    <h1>Examen</h1>
+    <p class="subtitle">Elige el tipo de examen: por peso proporcional del banco, o enfocado en una sola materia.</p>
     <div class="grid grid-2">
       <div class="card">
-        <h2>Configuración</h2>
+        <h2>📊 Examen general (por peso)</h2>
+        <p class="subtitle" style="font-size:13px">Distribución automática según el peso de cada materia en el banco de ${DATA.length} preguntas.</p>
         <div class="config-row">
-          <label>N° de preguntas<br><span class="hint">recomendado: 100 (igual al examen real)</span></label>
+          <label>N° de preguntas<br><span class="hint">recomendado: 100</span></label>
           <input type="number" id="cfg-total" min="10" max="${DATA.length}" step="10" value="${EXAM_DEFAULTS.total}">
         </div>
         <div class="config-row">
-          <label>Tiempo límite (minutos)<br><span class="hint">0 = sin límite de tiempo</span></label>
+          <label>Tiempo límite (min)<br><span class="hint">0 = sin límite</span></label>
           <input type="number" id="cfg-min" min="0" max="240" step="5" value="${EXAM_DEFAULTS.minutes}">
         </div>
         <div class="config-row">
@@ -961,13 +884,34 @@ function renderExamenEntry(){
           <button class="toggle ${EXAM_DEFAULTS.timerOn?'on':''}" id="cfg-timer"></button>
         </div>
         <div class="btn-row">
-          <button class="btn gold" id="start-exam">Iniciar simulacro →</button>
+          <button class="btn gold" id="start-exam">Iniciar examen general →</button>
         </div>
       </div>
       <div class="card">
-        <h2>Distribución (${comunes} comunes / ${especialidad} especialidad)</h2>
-        <div id="dist-list" style="max-height:280px;overflow:auto"></div>
+        <h2>📚 Examen por materia</h2>
+        <p class="subtitle" style="font-size:13px">Enfócate en una sola materia. Ideal para reforzar una debilidad.</p>
+        <div class="config-row">
+          <label>Materia</label>
+          <select id="cfg-mat" style="width:100%;padding:8px;border-radius:8px;border:1.5px solid var(--line);font-size:13px">
+            ${materiasArr.map(([m, c]) => `<option value="${escapeHtml(m)}">${shortMateria(m)} (${c})</option>`).join("")}
+          </select>
+        </div>
+        <div class="config-row">
+          <label>N° de preguntas</label>
+          <input type="number" id="cfg-mat-total" min="5" max="200" step="5" value="20">
+        </div>
+        <div class="config-row">
+          <label>Tiempo límite (min)<br><span class="hint">0 = sin límite</span></label>
+          <input type="number" id="cfg-mat-min" min="0" max="240" step="5" value="0">
+        </div>
+        <div class="btn-row">
+          <button class="btn gold" id="start-mat">Iniciar examen por materia →</button>
+        </div>
       </div>
+    </div>
+    <div class="card" style="margin-top:16px">
+      <h2>Distribución del examen general (${comunes} comunes / ${especialidad} especialidad)</h2>
+      <div id="dist-list" style="max-height:220px;overflow:auto"></div>
     </div>
   `;
   function refreshDist(){
@@ -991,6 +935,34 @@ function renderExamenEntry(){
     const timerOn = document.getElementById("cfg-timer").classList.contains("on");
     startExam(total, minutes, timerOn);
   };
+  // Nuevo: examen por materia
+  document.getElementById("start-mat").onclick = ()=>{
+    const materia = document.getElementById("cfg-mat").value;
+    const total = parseInt(document.getElementById("cfg-mat-total").value) || 20;
+    const minutes = parseInt(document.getElementById("cfg-mat-min").value) || 0;
+    startExamPorMateria(materia, total, minutes);
+  };
+}
+
+function startExamPorMateria(materia, total, minutes){
+  const pool = DATA.filter(q => q.materia === materia);
+  const qs = shuffle(sample(pool, Math.min(total, pool.length))).map(q => {
+    const order = shuffle(q.opciones.map((_,i)=>i));
+    const opciones = order.map(i => q.opciones[i]);
+    const correcta = order.indexOf(q.correcta);
+    return {...q, opciones, correcta};
+  });
+  examState = {
+    qs, answers: new Array(qs.length).fill(-1),
+    marked: new Array(qs.length).fill(false),
+    idx: 0, minutes, timerOn: true,
+    startedAt: Date.now(),
+    deadline: minutes > 0 ? Date.now() + minutes*60000 : null,
+    finished: false,
+    materiaFilter: materia,
+  };
+  saveExamState();
+  setView("quiz");
 }
 
 function startExam(total, minutes, timerOn){
@@ -1155,8 +1127,38 @@ function finishExam(){
     pct: fmtPct(correct/qs.length),
     byMateria,
     durationSec: Math.round((Date.now()-examState.startedAt)/1000),
+    tipo: examState.simN ? "simulacro" : "examen",
+    simN: examState.simN || null,
+    aciertos: correct,
+    fecha: Date.now(),
   };
   saveHistoryEntry(result);
+
+  // Si es un SIMULACRO, guarda los errores en pnp_errores para vista "Mis errores"
+  if(examState.simN){
+    const errores = lsGet(ns("errores"), {});
+    qs.forEach((q, i) => {
+      const picked = answers[i];
+      if(picked === q.correcta) return;
+      const key = String(q.n_original ?? q.n);
+      const prev = errores[key] || {intentos:0, aciertos:0};
+      errores[key] = {
+        n_original: q.n_original ?? q.n,
+        materia: q.materia || "",
+        materia_corta: q.materia_corta || "",
+        pregunta: q.pregunta,
+        opciones: q.opciones,
+        correcta: q.correcta,
+        ubicacion: q.ubicacion || "",
+        ultima_elegida: (picked >= 0 ? picked : null),
+        intentos: prev.intentos + 1,
+        aciertos: prev.aciertos,
+        sim_n: examState.simN,
+        fecha: new Date().toISOString(),
+      };
+    });
+    lsSet(ns("errores"), errores);
+  }
   examState.result = result;
   saveExamState();
   // guarda el puntaje en el ranking compartido (no bloquea la vista)
@@ -1810,10 +1812,18 @@ async function renderSimulacros(){
       const n = Number(el.dataset.simn);
       const ex = SIM.examenes.find(x=> x.n === n);
       if(!ex) return;
-      simActivo = { n, preguntas: ex.preguntas, respuestas: new Map(), inicio: Date.now(), titulo: ex.titulo };
-      view = "simulacro_run";
-      render();
-      window.scrollTo({top:0, behavior:"smooth"});
+      // Usa el motor SIECOPOL (renderQuiz): una pregunta a la vez, sidebar,
+      // cronómetro. examState.simN marca el examen para guardar en historial+errores.
+      const qs = ex.preguntas.map(q => ({...q}));   // no barajamos: son fijos
+      examState = {
+        qs, answers: new Array(qs.length).fill(-1),
+        marked: new Array(qs.length).fill(false),
+        idx: 0, minutes: 0, timerOn: true,
+        startedAt: Date.now(), deadline: null, finished: false,
+        simN: n, simTitulo: ex.titulo,   // ← marca de simulacro
+      };
+      saveExamState();
+      setView("quiz");
     };
     el.onclick = go;
     el.onkeydown = (e)=>{ if(e.key==="Enter"||e.key===" "){ e.preventDefault(); go(); } };
